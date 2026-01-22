@@ -112,7 +112,7 @@ def host_create_session() -> dict:
     sess = host.create_session()
     return {
         "session_id": sess.session_id,
-        "welcome": "Hi — I’m the Host Agent. Describe an incident or paste a JSON incident bundle (Ctrl+Enter to send).",
+        "welcome": "Hi — I’m the Host Agent. Describe an incident or paste a JSON incident bundle (Ctrl+Enter to send). Tip: type /help for commands, or use the sample loader to try realistic scenarios.",
     }
 
 

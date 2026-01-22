@@ -31,6 +31,15 @@ curl -X POST http://127.0.0.1:8000/cases -H "content-type: application/json" -d 
 - Agents: `GET /agents` lists agent “cards”, and each agent exposes `POST /agents/{name}/a2a` for A2A TASK→RESULT exchange.
 - A2A activation: `POST /agents/{name}/a2a` also supports `HEARTBEAT` envelopes to verify agent connectivity.
 
+## Host Agent tips (UI)
+
+- You can paste plain text (not just JSON). If key details are missing, the Host Agent asks 2–3 triage questions (host/timeframe/indicators).
+- Built-in commands:
+  - `/help` or `/commands`
+  - `/last`, `/case <id>`
+  - `/iocs [id|last]`, `/mitre [id|last]`, `/timeline [id|last]`
+  - `/export [id|last]`, `/reset`
+
 ## Multi-process (agent-to-agent over HTTP)
 
 By default, the gateway runs agents in-process. To run each agent as a separate service (multi-terminal demo style):
@@ -55,3 +64,8 @@ uvicorn main:app --reload
 ```
 
 In the UI, the Agents panel shows online/offline dots based on agent connectivity.
+
+### Convenience script
+
+- Command Prompt: `run_all_agents.bat`
+- PowerShell: `.\run_all_agents.bat`

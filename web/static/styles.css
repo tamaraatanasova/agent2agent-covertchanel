@@ -2,6 +2,7 @@
   --bg: #030712;
   --panel-bg: rgba(17, 24, 39, 0.7);
   --panel-border: rgba(255, 255, 255, 0.08);
+  --control-bg: rgba(0, 0, 0, 0.55);
   --text-main: #f9fafb;
   --text-muted: #9ca3af;
   --accent: #6366f1;
@@ -53,6 +54,23 @@ body {
 
 .mono {
   font-family: var(--font-mono);
+}
+
+.tiny {
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Header Styling */
@@ -436,6 +454,25 @@ body {
   border-top: 1px solid var(--panel-border);
 }
 
+.quickbar {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.quick-select {
+  display: inline-flex;
+  align-items: center;
+  min-width: 220px;
+  flex: 1;
+}
+
+.quickbar select {
+  width: 100%;
+}
+
 textarea {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--panel-border);
@@ -507,6 +544,70 @@ input:focus-visible {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+}
+
+/* Modal */
+.modal.hidden {
+  display: none;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: grid;
+  place-items: center;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+}
+
+.modal-card {
+  position: relative;
+  width: min(880px, calc(100vw - 24px));
+  max-height: min(680px, calc(100vh - 24px));
+  overflow: auto;
+  background: rgba(17, 24, 39, 0.92);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.modal-title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.modal-body {
+  padding: 1rem;
+}
+
+.modal-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.note {
+  margin: 0.75rem 0 0.5rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(0, 0, 0, 0.18);
 }
 
 /* Status Indicators */
@@ -605,12 +706,18 @@ input:focus-visible {
 select,
 input[type="number"],
 input[type="text"] {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--control-bg);
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   color: white;
   padding: 6px 10px;
   font-size: 0.85rem;
+}
+
+select option,
+select optgroup {
+  background-color: #000;
+  color: var(--text-main);
 }
 
 #covert {
@@ -657,6 +764,9 @@ input[type="text"] {
     padding: 0.9rem 1rem;
   }
   .kpis {
+    grid-template-columns: 1fr;
+  }
+  .modal-grid {
     grid-template-columns: 1fr;
   }
 }

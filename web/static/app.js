@@ -5,6 +5,28 @@ let latestCaseId = null;
 
 const el = (id) => document.getElementById(id);
 
+const SAMPLES = {
+  cred_dump:
+    "Title: Suspicious PowerShell + credential dumping\n" +
+    "Incident: On pc-hr-01, winword.exe spawned powershell.exe. EDR flagged possible mimikatz/lsass access. Shortly after, dc-01 shows 15 login failures for user j.smith in 10 minutes. Possible lateral movement.\n" +
+    "Notes: Please summarize, map to MITRE, list IOCs, and propose a triage + containment plan (policy-safe).",
+  phishing:
+    "Title: Phishing → OAuth token abuse\n" +
+    "Incident: Multiple users reported a fake Microsoft 365 login page. User a.ivanov clicked the link and completed login. Later, CAS/IdP logs show unusual OAuth consent granted to app 'MailSyncPro' and mailbox rules created to auto-forward invoices to external address.\n" +
+    "Indicators: URL https://login-microsoft-security[.]com/ , external recipient billing-dept@protonmail.com\n" +
+    "Request: Identify containment actions and evidence to preserve.",
+  lateral:
+    "Title: Suspected lateral movement via SMB\n" +
+    "Incident: From host ws-17, we observed connections to multiple internal hosts over SMB (445) within 5 minutes. EDR shows psexec-like service creation and remote cmd execution attempts. New local admin account 'svc-backup' appeared on two machines.\n" +
+    "Indicators: account svc-backup, ports 445/135, process psexesvc.exe\n" +
+    "Timeframe: last 10 minutes",
+  web_attack:
+    "Title: Web attack / possible credential stuffing\n" +
+    "Incident: Web gateway logs show repeated POST /login attempts from 185.199.110.153 against 200+ usernames. Some successes followed by access to /admin. WAF shows spikes in 401/403 and rate-limit triggers.\n" +
+    "Indicators: IP 185.199.110.153, endpoint /login\n" +
+    "Timeframe: 2026-01-22 21:10–21:25",
+};
+
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
   const ct = (res.headers.get("content-type") || "").toLowerCase();
@@ -57,6 +79,8 @@ function setCaseLink(caseId) {
   const link = el("caseLink");
   link.textContent = caseId;
   link.href = `/case/${caseId}`;
+  const copyBtn = el("copyCaseBtn");
+  if (copyBtn) copyBtn.disabled = !caseId;
 }
 
 function setCovertResult(payload) {
@@ -428,6 +452,40 @@ function clearChat() {
   addBubble("system", "Cleared.");
 }
 
+function openModal() {
+  const modal = el("modal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeModal() {
+  const modal = el("modal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+async function copyCaseId() {
+  if (!latestCaseId) return;
+  try {
+    await navigator.clipboard.writeText(latestCaseId);
+    addBubble("system", `Copied case id: ${latestCaseId}`);
+  } catch {
+    addBubble("system", "Copy failed (clipboard permission).");
+  }
+}
+
+function loadSample() {
+  const sel = el("sampleSelect");
+  const input = el("input");
+  if (!sel || !input) return;
+  const key = sel.value || "cred_dump";
+  input.value = SAMPLES[key] || SAMPLES.cred_dump;
+  input.focus();
+  addBubble("system", "Loaded sample incident into the input box.");
+}
+
 function wire() {
   el("sendBtn").addEventListener("click", () => {
     const text = el("input").value.trim();
@@ -448,6 +506,23 @@ function wire() {
 
   el("covertBtn").addEventListener("click", () => void runCovertDemo());
   el("clearBtn").addEventListener("click", () => clearChat());
+
+  const commandsBtn = el("commandsBtn");
+  if (commandsBtn) commandsBtn.addEventListener("click", () => openModal());
+  const modalClose = el("modalClose");
+  if (modalClose) modalClose.addEventListener("click", () => closeModal());
+  const modalBackdrop = el("modalBackdrop");
+  if (modalBackdrop) modalBackdrop.addEventListener("click", () => closeModal());
+
+  const loadBtn = el("loadSampleBtn");
+  if (loadBtn) loadBtn.addEventListener("click", () => loadSample());
+
+  const copyBtn = el("copyCaseBtn");
+  if (copyBtn) copyBtn.addEventListener("click", () => void copyCaseId());
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeModal();
+  });
 }
 
 window.addEventListener("DOMContentLoaded", () => {
