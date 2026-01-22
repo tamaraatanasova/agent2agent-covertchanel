@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI‑SOC Host Agent</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <!-- Add this to your <head> -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">AI‑SOC</div>
+      <div class="subtitle">Host Agent · A2A Gateway · Covert Timing Defense</div>
+    </div>
+    <div class="top-actions">
+      <a class="chip" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+      <a class="chip" href="/health" target="_blank" rel="noreferrer">Health</a>
+    </div>
+  </header>
+
+  <main class="layout layout-3col">
+    <aside class="rail rail-left">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Case</div>
+          <div class="panel-meta">
+            <span class="muted">Latest:</span>
+            <a id="caseLink" class="mono" href="#" target="_blank" rel="noreferrer">—</a>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="card">
+            <div class="card-title">Agents</div>
+            <div id="agentList" class="list muted">Loading agents…</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Alerts</div>
+            <div id="alerts" class="list muted">No alerts yet.</div>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="panel chat">
+      <div class="panel-head">
+        <div class="panel-title">Host Agent</div>
+        <div class="panel-meta">
+          <span class="muted">Session:</span>
+          <span id="sessionId" class="mono">—</span>
+        </div>
+      </div>
+
+      <div id="messages" class="messages" aria-live="polite"></div>
+
+      <div class="composer">
+        <textarea id="input" placeholder="Describe an incident (text) or paste a JSON incident bundle. Tip: if you paste a template prompt, put the real details after 'Incident:'. Ctrl+Enter to send."
+          rows="3"></textarea>
+        <div class="composer-actions">
+          <button id="sendBtn" class="btn primary">Send</button>
+          <button id="clearBtn" class="btn ghost">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="rail rail-right">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Covert Timing Lab</div>
+          <div class="panel-meta">
+            <span class="muted">Goal:</span>
+            <span>measure BER</span>
+          </div>
+        </div>
+        <div class="cards">
+          <div class="card">
+              <div class="controls">
+                <label class="control control-wide">
+                  <span class="control-label">Channel</span>
+                  <select id="covertChannel">
+                    <option value="timing" selected>Timing (latency)</option>
+                    <option value="storage">Storage (extra fields)</option>
+                    <option value="size">Size (payload length)</option>
+                  </select>
+                </label>
+
+                <label class="control">
+                  <span class="control-label">Pattern</span>
+                  <select id="bitsPattern">
+                    <option value="alternating" selected>Alternating 0101…</option>
+                  <option value="random">Random</option>
+                  <option value="zeros">All 0s</option>
+                  <option value="ones">All 1s</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+
+                <label class="control">
+                  <span class="control-label">Bits</span>
+                  <input id="bitsLen" type="number" min="8" max="256" value="64" />
+                </label>
+
+                <label class="control control-wide">
+                  <span class="control-label">Custom bits (optional)</span>
+                  <input id="bitsCustom" type="text" placeholder="010110..." />
+                </label>
+
+                <label class="control">
+                  <span class="control-label">Min response (ms)</span>
+                  <input id="minRespMs" type="number" min="0" max="5000" value="400" />
+                </label>
+
+              <label class="control">
+                <span class="control-label">Jitter low/high (ms)</span>
+                <div class="row">
+                  <input id="jitterLow" type="number" min="0" max="5000" value="10" />
+                  <input id="jitterHigh" type="number" min="0" max="5000" value="40" />
+                </div>
+              </label>
+
+              <label class="control toggle">
+                <input id="compareMode" type="checkbox" checked />
+                <span>Compare baseline vs defended</span>
+              </label>
+
+              <label class="control toggle">
+                <input id="serverBits" type="checkbox" checked />
+                <span>Generate “secret token” server-side (recommended)</span>
+              </label>
+
+              <div class="row right">
+                <button id="covertBtn" class="btn">Run</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Results</div>
+            <div id="covertSummary" class="kpis muted">Run an experiment to see metrics.</div>
+            <div id="tokenNote" class="note muted">
+              Demo note: this lab uses a simulated “secret token” generated server-side (random bits). The actual bits are not shown; only a token id (hash) is displayed.
+            </div>
+            <canvas id="covertChart" class="chart" width="560" height="160" aria-label="Covert experiment chart"></canvas>
+            <div id="covert" class="list muted">Run to see decode metrics (BER) and per-bit latency.</div>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>

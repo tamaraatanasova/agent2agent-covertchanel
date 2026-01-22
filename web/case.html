@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI‑SOC Case</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">AI‑SOC</div>
+      <div class="subtitle">Case Viewer · Friendly Trace</div>
+    </div>
+    <div class="top-actions">
+      <a class="chip" href="/" rel="noreferrer">Back</a>
+      <a id="rawLink" class="chip" href="#" target="_blank" rel="noreferrer">Raw JSON</a>
+      <button id="refreshBtn" class="chip chip-btn">Refresh</button>
+    </div>
+  </header>
+
+  <main class="layout case-layout">
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Case Overview</div>
+        <div class="panel-meta">
+          <span class="muted">ID:</span>
+          <span id="caseId" class="mono">—</span>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Status</div>
+          <div id="overview" class="list muted">Loading…</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Analysis</div>
+          <div id="analysisBox" class="list muted">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Alerts</div>
+          <div id="alertsBox" class="list muted">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Agent Outputs</div>
+        <div class="panel-meta">
+          <span class="muted">Tip:</span>
+          <span>scroll</span>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Report (Executive)</div>
+          <div id="reportBox" class="list muted">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Covert Analysis</div>
+          <div id="covertCaseBox" class="list muted">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Outputs (Raw)</div>
+          <pre id="outputsBox" class="code muted">—</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title">A2A Trace</div>
+        <div class="panel-meta">
+          <input id="filter" class="filter" type="text" placeholder="Filter messages (agent/type/task)..." />
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Messages</div>
+          <div id="messagesBox" class="list muted">—</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/case.js"></script>
+</body>
+
+</html>
