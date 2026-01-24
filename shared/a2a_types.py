@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import json
+import secrets
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -7,6 +10,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import model_validator
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 
 class MessageType(str, Enum):
@@ -47,7 +52,35 @@ class A2ASecurity(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nonce: str
+    key_id: str = Field(default="default")
     signature: str
+
+    @staticmethod
+    def _payload_bytes(envelope: "A2AEnvelope") -> bytes:
+        # Canonical, deterministic JSON payload excluding `security`.
+        data = envelope.model_dump(mode="json", exclude={"security"})
+        return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    @staticmethod
+    def _b64e(b: bytes) -> str:
+        return base64.b64encode(b).decode("ascii")
+
+    @staticmethod
+    def _b64d(s: str) -> bytes:
+        return base64.b64decode(s.encode("ascii"))
+
+    @classmethod
+    def sign_envelope(cls, envelope: "A2AEnvelope", *, private_key_b64: str, key_id: str = "default") -> "A2ASecurity":
+        priv = Ed25519PrivateKey.from_private_bytes(cls._b64d(private_key_b64))
+        nonce = secrets.token_hex(16)
+        msg = nonce.encode("utf-8") + b"." + cls._payload_bytes(envelope)
+        sig = priv.sign(msg)
+        return cls(nonce=nonce, key_id=key_id, signature=cls._b64e(sig))
+
+    def verify_envelope(self, envelope: "A2AEnvelope", *, public_key_b64: str) -> None:
+        pub = Ed25519PublicKey.from_public_bytes(self._b64d(public_key_b64))
+        msg = self.nonce.encode("utf-8") + b"." + self._payload_bytes(envelope)
+        pub.verify(self._b64d(self.signature), msg)
 
 
 class A2AEnvelope(BaseModel):

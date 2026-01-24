@@ -57,3 +57,14 @@ class InMemoryStore:
         with self._lock:
             rec = self._cases[case_id]
             rec.final_report = report
+
+    def patch_incident_bundle(self, case_id: str, patch: dict[str, Any]) -> None:
+        if not isinstance(patch, dict) or not patch:
+            return
+        with self._lock:
+            rec = self._cases.get(case_id)
+            if rec is None:
+                return
+            if not isinstance(rec.incident_bundle, dict):
+                rec.incident_bundle = {}
+            rec.incident_bundle.update(patch)

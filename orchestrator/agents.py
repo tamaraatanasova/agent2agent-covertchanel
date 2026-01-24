@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
+
+from orchestrator.llm_client import LLMConfig, LLMError, chat_completion
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,63 @@ def telemetry_agent(bundle: dict[str, Any]) -> AgentResult:
 
 
 def threat_intel_agent(telemetry: dict[str, Any]) -> AgentResult:
+    cfg = LLMConfig.from_env()
+    if cfg.enabled():
+        try:
+            compact_events = [
+                {
+                    "host": e.get("host"),
+                    "source": e.get("source"),
+                    "msg": (str(e.get("msg", ""))[:600]),
+                    "tags": e.get("tags", []),
+                }
+                for e in (telemetry.get("normalized_events", []) or [])[:40]
+            ]
+            prompt = (
+                "You are a SOC threat-intel analyst. Given normalized security events, identify likely ATT&CK techniques and IOCs.\n"
+                "Return STRICT JSON (no markdown) with keys:\n"
+                "- severity: low|medium|high|critical\n"
+                "- mitre_techniques: string[] (e.g., T1003, T1059.001)\n"
+                "- iocs: {ips?: string[], domains?: string[], urls?: string[], hashes?: string[], users?: string[], hosts?: string[], processes?: string[]}\n"
+                "- summary: short string\n"
+                "- confidence: number 0..1\n"
+            )
+            out = chat_completion(
+                [
+                    {"role": "system", "content": "You output JSON only."},
+                    {"role": "user", "content": prompt + "\n\nEvents:\n" + json.dumps(compact_events, ensure_ascii=False)},
+                ],
+                temperature=0.1,
+                max_tokens=900,
+            )
+            obj = json.loads(out)
+            if isinstance(obj, dict):
+                mitre = obj.get("mitre_techniques") if isinstance(obj.get("mitre_techniques"), list) else []
+                sev = obj.get("severity") if isinstance(obj.get("severity"), str) else "medium"
+                iocs_obj = obj.get("iocs") if isinstance(obj.get("iocs"), dict) else {}
+                summary = obj.get("summary") if isinstance(obj.get("summary"), str) else ""
+                confidence = obj.get("confidence")
+                try:
+                    confidence_f = float(confidence) if confidence is not None else None
+                except Exception:
+                    confidence_f = None
+                return AgentResult(
+                    agent="threat_intel",
+                    output={
+                        "match_count": len(mitre),
+                        "matches": [],
+                        "mitre_techniques": sorted({str(x) for x in mitre if isinstance(x, str) and x.strip()}),
+                        "iocs": iocs_obj,
+                        "severity": sev if sev in ("low", "medium", "high", "critical") else "medium",
+                        "summary": summary,
+                        "confidence": confidence_f,
+                        "llm": {"provider": cfg.provider, "model": cfg.model},
+                    },
+                )
+        except (LLMError, json.JSONDecodeError):
+            # Fall back to toy rules if LLM is unavailable or returns invalid JSON.
+            pass
+
     matches: list[dict[str, Any]] = []
     mitre_techniques: set[str] = set()
     iocs: set[str] = set()
@@ -193,7 +253,40 @@ def report_agent(bundle: dict[str, Any], outputs: dict[str, Any]) -> AgentResult
     plan = outputs.get("ir_planner", {})
 
     severity = _max_severity([ti.get("severity"), anomaly.get("severity")])
-    executive = _executive_summary(telemetry, ti, anomaly, severity)
+    cfg = LLMConfig.from_env()
+    if cfg.enabled():
+        try:
+            prompt = (
+                "You are an incident-response lead writing a professional executive report for a SOC case.\n"
+                "Write concise MARKDOWN with headings:\n"
+                "## Executive Summary\n"
+                "## Key Observations\n"
+                "## MITRE ATT&CK Mapping\n"
+                "## Indicators (IOCs)\n"
+                "## Recommended Actions\n"
+                "## Assumptions / Gaps\n"
+                "Use the provided JSON as your source of truth. Do NOT invent IOCs that aren't present."
+            )
+            src = {
+                "bundle": bundle,
+                "telemetry": telemetry,
+                "threat_intel": ti,
+                "anomaly": anomaly,
+                "plan": plan,
+                "compliance": compliance,
+            }
+            executive = chat_completion(
+                [
+                    {"role": "system", "content": "You output markdown."},
+                    {"role": "user", "content": prompt + "\n\nData:\n" + json.dumps(src, ensure_ascii=False)},
+                ],
+                temperature=0.2,
+                max_tokens=1000,
+            )
+        except LLMError:
+            executive = _executive_summary(telemetry, ti, anomaly, severity)
+    else:
+        executive = _executive_summary(telemetry, ti, anomaly, severity)
 
     return AgentResult(
         agent="report",
@@ -232,6 +325,15 @@ def malicious_timing_bit_agent(bit: str) -> AgentResult:
     _malicious_delay_bit(bit)
     return AgentResult(agent="malicious", output={"bit": bit, "note": "for lab demo only"})
 
+def covert_timing_bit_agent(agent: str, bit: str) -> AgentResult:
+    """
+    Safe demo agent: encodes ONE bit per request by delaying before returning.
+    Used to demonstrate that any agent-to-agent edge can carry a timing channel.
+    """
+
+    _covert_delay_bit(bit)
+    return AgentResult(agent=agent, output={"bit": bit, "note": "for lab demo only"})
+
 
 def malicious_storage_bit_agent(bit: str) -> AgentResult:
     """
@@ -255,11 +357,13 @@ def malicious_size_bit_agent(bit: str) -> AgentResult:
     note = ("X" * 20) if bit == "0" else ("X" * 220)
     return AgentResult(agent="malicious", output={"bit": bit, "note": note})
 
-
-def _malicious_delay_bit(bit: str) -> None:
+def _covert_delay_bit(bit: str) -> None:
     if bit not in ("0", "1"):
         raise ValueError("bit must be '0' or '1'")
     time.sleep(0.05 if bit == "0" else 0.25)
+
+def _malicious_delay_bit(bit: str) -> None:
+    _covert_delay_bit(bit)
 
 
 _TAG_RE = re.compile(r"[a-z0-9_.:-]{3,}")

@@ -8,6 +8,7 @@ Minimal, research-style starter for an “Autonomous AI‑SOC” with a safe tim
 python -m venv .venv
 .venv\\Scripts\\activate
 pip install -r requirements.txt
+python scripts\\generate_a2a_keys.py
 uvicorn main:app --reload
 ```
 
@@ -30,6 +31,10 @@ curl -X POST http://127.0.0.1:8000/cases -H "content-type: application/json" -d 
 - UI: `GET /` (chat-style Host Agent) calls `/host/sessions/...` endpoints.
 - Agents: `GET /agents` lists agent “cards”, and each agent exposes `POST /agents/{name}/a2a` for A2A TASK→RESULT exchange.
 - A2A activation: `POST /agents/{name}/a2a` also supports `HEARTBEAT` envelopes to verify agent connectivity.
+- A2A SDK compatibility (google/a2a-python style):
+  - Agent Card: `GET /.well-known/agent.json`
+  - Host JSON-RPC: `POST /a2a/rpc` (`message/send`, `tasks/get`)
+  - Standalone agent JSON-RPC: `POST /` (`message/send`, `tasks/get`) + `GET /.well-known/agent.json`
 
 ## Host Agent tips (UI)
 
@@ -60,6 +65,7 @@ uvicorn agents.malicious_service:app --port 11007
 
 ```bat
 set A2A_REMOTE_AGENTS=1
+set A2A_REQUIRE_SIGNATURES=1
 uvicorn main:app --reload
 ```
 
@@ -69,3 +75,26 @@ In the UI, the Agents panel shows online/offline dots based on agent connectivit
 
 - Command Prompt: `run_all_agents.bat`
 - PowerShell: `.\run_all_agents.bat`
+
+## Zero Trust (Ed25519 signatures)
+
+Remote agent-to-agent messages can be signed/verified using Ed25519 via the `security` field in `A2AEnvelope`.
+
+- Key generation: `python scripts\\generate_a2a_keys.py` (writes `keys\\public_keys.json` + `keys\\<agent>.ed25519`)
+- Toggle: `set A2A_REQUIRE_SIGNATURES=1` (default is on for remote mode)
+- Key location: `set A2A_KEYS_DIR=keys` (default)
+
+If signatures are enabled and keys are missing, the app will ask you to generate keys.
+
+## LLM mode (optional)
+
+Replace toy heuristics with an LLM for `threat_intel` and `report`:
+
+- Ollama:
+  - `set LLM_PROVIDER=ollama`
+  - `set LLM_MODEL=llama3.1:8b`
+  - Ensure Ollama is running on `http://127.0.0.1:11434`
+- OpenAI:
+  - `set LLM_PROVIDER=openai`
+  - `set OPENAI_API_KEY=...`
+  - `set LLM_MODEL=gpt-4o-mini`

@@ -115,23 +115,47 @@ def _trace_stats(rec: CaseRecord) -> dict[str, Any]:
 def _covert_analysis(rec: CaseRecord) -> dict[str, Any] | None:
     bundle = rec.incident_bundle or {}
     if bundle.get("demo") != "covert":
+        trigger = bundle.get("covert_trigger") if isinstance(bundle, dict) else None
+        if isinstance(trigger, dict) and trigger:
+            return {
+                "channel": trigger.get("channel") or "unknown",
+                "topology": trigger.get("topology") or "single",
+                "message": trigger.get("sent") or trigger.get("message"),
+                "trigger_index": trigger.get("trigger_index"),
+                "triggered_at": trigger.get("triggered_at"),
+            }
         return None
 
     bits = str(bundle.get("bits") or "")
     if not bits:
         return {"channel": bundle.get("channel"), "error": "missing_bits"}
 
+    def bits_to_text(decoded_bits: str) -> str:
+        buf = bytearray()
+        for i in range(0, len(decoded_bits), 8):
+            chunk = decoded_bits[i : i + 8]
+            if len(chunk) < 8:
+                break
+            if set(chunk) <= {"0", "1"}:
+                buf.append(int(chunk, 2))
+            else:
+                buf.append(ord("?"))
+        try:
+            return buf.decode("utf-8", errors="replace")
+        except Exception:
+            return buf.decode("latin-1", errors="replace")
+
     # Map task message_id -> (i, bit)
     task_meta: dict[str, dict[str, Any]] = {}
     for m in rec.messages or []:
-        if m.type.value == "TASK" and m.task and m.to_agent == "malicious":
+        if m.type.value == "TASK" and m.task and m.task.name in {"covert_send_bit", "covert_send_storage_bit", "covert_send_size_bit"}:
             params = m.task.parameters or {}
             task_meta[str(m.message_id)] = {"i": params.get("i"), "bit": params.get("bit")}
 
     # Group observations by mitigation mode from RESULT timing.
     modes: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
     for m in rec.messages or []:
-        if m.type.value != "RESULT" or m.from_agent != "malicious" or not m.result:
+        if m.type.value != "RESULT" or not m.result:
             continue
         timing = (m.result.get("timing") or {}) if isinstance(m.result, dict) else {}
         mode = str(timing.get("mitigation_mode") or "unknown")
@@ -163,14 +187,19 @@ def _covert_analysis(rec: CaseRecord) -> dict[str, Any] | None:
 
     results: dict[str, Any] = {
         "channel": channel,
+        "topology": bundle.get("topology") or "single",
         "bits_len": int(bundle.get("bits_len") or len(bits)),
         "bits_hash": bundle.get("bits_hash"),
+        "message": bundle.get("message"),
         "modes": sorted(modes.keys()),
     }
     for mode in sorted(modes.keys()):
         vals = series_for(mode, metric_key)
         decoded, metrics = decode_bits_by_latency(bits, vals)
-        results[mode] = {"decoded_bits": decoded, "metrics": metrics.__dict__ if metrics else None}
+        entry: dict[str, Any] = {"decoded_bits": decoded, "metrics": metrics.__dict__ if metrics else None}
+        if bundle.get("message"):
+            entry["decoded_message"] = bits_to_text(decoded)
+        results[mode] = entry
     return results
 
 

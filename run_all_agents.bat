@@ -6,6 +6,12 @@ set "PY=python"
 if exist "%~dp0.venv\Scripts\python.exe" set "PY=%~dp0.venv\Scripts\python.exe"
 if exist "%~dp0venv\Scripts\python.exe" set "PY=%~dp0venv\Scripts\python.exe"
 
+REM Ensure A2A signing keys exist (Zero Trust demo).
+if not exist "%~dp0keys\public_keys.json" (
+  echo A2A key registry not found. Generating keys...
+  "%PY%" "%~dp0scripts\generate_a2a_keys.py"
+)
+
 REM Start each agent service in its own terminal window (kept open with cmd /k).
 echo Using Python: %PY%
 

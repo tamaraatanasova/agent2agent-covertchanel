@@ -8,6 +8,10 @@ from orchestrator import agents as agent_impl
 
 
 def dispatch_task(to_agent: str, task: A2ATask) -> dict[str, Any]:
+    if task.name == "covert_send_bit":
+        bit = str(task.parameters.get("bit", "0"))
+        return agent_impl.covert_timing_bit_agent(to_agent, bit).output
+
     if to_agent == "telemetry":
         if task.name != "normalize_enrich":
             raise ValueError("unsupported task for telemetry")

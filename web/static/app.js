@@ -119,10 +119,17 @@ function setCovertResult(payload) {
   const nbits = payload.bits_len != null ? payload.bits_len : (payload.bits ? payload.bits.length : 0);
   const h = payload.bits_hash ? ` hash=${payload.bits_hash}` : "";
   lines.push(`bits=${nbits}${h}`);
+  if (payload.topology) lines.push(`topology=${payload.topology}`);
+  if (payload.message) lines.push(`message_sent=${payload.message}`);
 
   if (payload.baseline && payload.defended) {
     if (summary) renderSummary(summary, payload);
     if (chart) renderChart(chart, payload);
+    const bm = payload.baseline && payload.baseline.decoded_message && payload.baseline.decoded_message.observer_total_ms;
+    const dm = payload.defended && payload.defended.decoded_message && payload.defended.decoded_message.observer_total_ms;
+    if (bm) lines.push(`decoded_message_baseline=${bm}`);
+    if (dm) lines.push(`decoded_message_defended=${dm}`);
+    if (bm || dm) lines.push("");
     lines.push(formatRun("baseline (no mitigation)", payload.baseline));
     lines.push("");
     lines.push(formatRun("defended (mitigation always)", payload.defended));
@@ -133,6 +140,8 @@ function setCovertResult(payload) {
   if (payload.per_bit) {
     if (summary) renderSummary(summary, payload);
     if (chart) renderChart(chart, payload);
+    const m = payload.decoded_message && payload.decoded_message.observer_total_ms;
+    if (m) lines.push(`decoded_message=${m}`);
     lines.push(formatRun(payload.mode || "run", payload));
     box.textContent = lines.join("\n");
     return;
@@ -358,7 +367,8 @@ async function createSession() {
 
 async function sendMessage(text) {
   el("sendBtn").disabled = true;
-  el("covertBtn").disabled = true;
+  const covertBtn = el("covertBtn");
+  if (covertBtn) covertBtn.disabled = true;
   addBubble("user", text);
   addBubble("system", "Host agent routing tasks to agents…");
 
@@ -374,11 +384,21 @@ async function sendMessage(text) {
     if (data.case_id) void refreshCase(data.case_id);
 
     addBubble("assistant", data.reply || "No reply.");
+    if (data.covert) {
+      const covert = data.covert || {};
+      if (covert.error) {
+        addBubble("system", `Covert channel - error - ${covert.error}`);
+      } else {
+        const channel = covert.channel || "timing";
+        const msg = covert.sent || covert.decoded || "Tamara";
+        addBubble("assistant", `Covert channel - ${channel} - ${msg}`);
+      }
+    }
   } catch (e) {
     addBubble("system", `Error: ${String(e)}`);
   } finally {
     el("sendBtn").disabled = false;
-    el("covertBtn").disabled = false;
+    if (covertBtn) covertBtn.disabled = false;
   }
 }
 
@@ -388,6 +408,9 @@ async function runCovertDemo() {
   addBubble("system", "Running covert experiment…");
   try {
     const channel = (el("covertChannel") && el("covertChannel").value) || "timing";
+    const topology = Boolean(el("meshMode") && el("meshMode").checked) ? "mesh" : "single";
+    const message = ((el("covertMessage") && el("covertMessage").value) || "HELLO").trim() || "HELLO";
+    if (topology === "mesh" && channel !== "timing") throw new Error("Mesh mode supports timing channel only.");
     const bits = buildBits();
     const compare = Boolean(el("compareMode").checked);
     const server_generate_bits = Boolean(el("serverBits") && el("serverBits").checked);
@@ -401,6 +424,8 @@ async function runCovertDemo() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         channel,
+        topology,
+        message,
         compare,
         server_generate_bits,
         bits_len,
@@ -412,7 +437,17 @@ async function runCovertDemo() {
     });
     if (data.case_id) setCaseLink(data.case_id);
     setCovertResult(data);
-    addBubble("assistant", "Experiment complete. See the Covert Timing Lab panel for decode metrics and per-bit latency.");
+    const baseline = data.baseline || data;
+    const decodedObj = baseline && typeof baseline.decoded_message === "object" ? baseline.decoded_message : null;
+    let decoded = null;
+    if (decodedObj) {
+      if (channel === "size" || channel === "storage") {
+        decoded = decodedObj.observer_size_bytes || decodedObj.observer_total_ms || decodedObj.agent_elapsed_ms;
+      } else {
+        decoded = decodedObj.observer_total_ms || decodedObj.agent_elapsed_ms || decodedObj.observer_size_bytes;
+      }
+    }
+    addBubble("assistant", `Covert channel - ${channel} - ${decoded || message}`);
   } catch (e) {
     setCovertResult({ bits: buildBits(), channel: (el("covertChannel") && el("covertChannel").value) || "timing", error: String(e) });
     addBubble("system", `Error: ${String(e)}`);
@@ -504,7 +539,8 @@ function wire() {
     }
   });
 
-  el("covertBtn").addEventListener("click", () => void runCovertDemo());
+  const covertBtn = el("covertBtn");
+  if (covertBtn) covertBtn.addEventListener("click", () => void runCovertDemo());
   el("clearBtn").addEventListener("click", () => clearChat());
 
   const commandsBtn = el("commandsBtn");

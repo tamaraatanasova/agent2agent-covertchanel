@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from math import log2
 from statistics import median
 from typing import Deque, DefaultDict, Iterable
 
@@ -14,30 +15,55 @@ class TimingAlert:
     sample_count: int
 
 
-def _bimodal_score(latencies_ms: list[float], *, min_samples: int = 12) -> tuple[float, str]:
+def _entropy_score(latencies_ms: list[float], *, min_samples: int = 12, bins: int = 16) -> tuple[float, str]:
     if len(latencies_ms) < min_samples:
         return 0.0, "insufficient_samples"
 
-    latencies_ms = sorted(latencies_ms)
-    m = median(latencies_ms)
-    low = [x for x in latencies_ms if x <= m]
-    high = [x for x in latencies_ms if x > m]
-    if not low or not high:
-        return 0.0, "no_split"
+    latencies_ms = [float(x) for x in latencies_ms]
+    lo = min(latencies_ms)
+    hi = max(latencies_ms)
+    rng = hi - lo
+    if rng < 50:
+        return 0.0, f"range_too_small({rng:.1f}ms)"
 
-    low_med = median(low)
-    high_med = median(high)
-    sep = high_med - low_med
+    # Quantize into fixed bins across observed range.
+    counts = [0] * bins
+    for x in latencies_ms:
+        t = (x - lo) / rng
+        idx = int(t * bins)
+        if idx >= bins:
+            idx = bins - 1
+        if idx < 0:
+            idx = 0
+        counts[idx] += 1
 
-    if sep < 120:
-        return 0.0, f"separation_too_small({sep:.1f}ms)"
+    n = sum(counts)
+    if n <= 0:
+        return 0.0, "no_samples"
 
-    balance = min(len(low), len(high)) / max(len(low), len(high))
-    if balance < 0.25:
-        return 0.2, f"unbalanced_modes(balance={balance:.2f}, sep={sep:.1f}ms)"
+    probs = [c / n for c in counts if c > 0]
+    h = -sum(p * log2(p) for p in probs)
+    h_norm = h / log2(bins)
 
-    score = min(1.0, (sep / 250.0) * (0.6 + 0.4 * balance))
-    return score, f"bimodal_latency(sep={sep:.1f}ms, balance={balance:.2f})"
+    # "Consistent pattern" heuristic: concentrated into 1–2 bins (low entropy)
+    # and not a single constant bin.
+    top = sorted((c / n for c in counts), reverse=True)
+    top1 = top[0] if top else 0.0
+    top2 = top[1] if len(top) > 1 else 0.0
+
+    if top1 > 0.95:
+        return 0.0, f"almost_constant(p={top1:.2f})"
+    if top1 + top2 < 0.75:
+        return 0.0, f"not_concentrated(p12={top1 + top2:.2f}, Hn={h_norm:.2f})"
+
+    # Low normalized entropy + large range indicates stable timing levels.
+    if h_norm > 0.45 or rng < 120:
+        return 0.0, f"entropy_not_suspicious(Hn={h_norm:.2f}, range={rng:.1f}ms)"
+
+    ent_factor = min(1.0, (0.45 - h_norm) / 0.45)
+    rng_factor = min(1.0, rng / 250.0)
+    score = min(1.0, ent_factor * (0.65 + 0.35 * rng_factor))
+    return score, f"low_entropy(Hn={h_norm:.2f}, bins={bins}, range={rng:.1f}ms, p12={top1 + top2:.2f})"
 
 
 class LatencyDetector:
@@ -48,7 +74,7 @@ class LatencyDetector:
     def observe(self, key: str, latency_ms: float) -> TimingAlert | None:
         buf = self._latencies[key]
         buf.append(float(latency_ms))
-        score, reason = _bimodal_score(list(buf))
+        score, reason = _entropy_score(list(buf))
         if score >= 0.7:
             return TimingAlert(key=key, score=score, reason=reason, sample_count=len(buf))
         return None

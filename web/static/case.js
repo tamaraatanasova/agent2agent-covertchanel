@@ -88,12 +88,30 @@ function summarizeAnalysis(analysis) {
 }
 
 function summarizeCovert(covert) {
-  if (!covert) return "Not a covert demo case.";
+  if (!covert) return "No covert channel activity recorded for this case.";
   if (covert.error) return `Error: ${covert.error}`;
+
+  const isDemoCase = covert.bits_len != null || covert.bits_hash || Array.isArray(covert.modes);
+  if (!isDemoCase) {
+    const lines = [];
+    if (covert.trigger_index != null || covert.triggered_at) {
+      const idx = covert.trigger_index != null ? `#${covert.trigger_index}` : "";
+      const at = covert.triggered_at ? ` at ${covert.triggered_at}` : "";
+      lines.push(`Triggered: ${idx}${at}`.trim());
+    }
+    if (covert.channel) lines.push(`Channel: ${covert.channel}`);
+    if (covert.topology) lines.push(`Topology: ${covert.topology}`);
+    if (covert.message) lines.push(`Message: ${covert.message}`);
+    if (covert.decoded && covert.decoded !== covert.message) lines.push(`Decoded: ${covert.decoded}`);
+    return lines.join("\n") || "Covert channel activity recorded.";
+  }
+
   const lines = [];
   lines.push(`Channel: ${covert.channel}`);
+  if (covert.topology) lines.push(`Topology: ${covert.topology}`);
   if (covert.bits_len != null) lines.push(`Bits: ${covert.bits_len}`);
   if (covert.bits_hash) lines.push(`Token id: ${covert.bits_hash}`);
+  if (covert.message) lines.push(`Message (sent): ${covert.message}`);
   lines.push("Note: underlying bits are redacted in the case JSON view.");
   lines.push(`Modes: ${(covert.modes || []).join(", ") || "n/a"}`);
   for (const m of covert.modes || []) {
@@ -103,6 +121,7 @@ function summarizeCovert(covert) {
     const acc = met ? `${(met.accuracy * 100).toFixed(1)}%` : "n/a";
     const n = met ? `${met.sample_count}` : "n/a";
     lines.push(`- ${m}: BER=${ber} acc=${acc} n=${n}`);
+    if (r.decoded_message) lines.push(`  decoded_message=${String(r.decoded_message)}`);
   }
   return lines.join("\n");
 }

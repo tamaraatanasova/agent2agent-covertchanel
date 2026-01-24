@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import json
+from threading import Lock
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.orchestrator import Orchestrator
@@ -9,6 +13,17 @@ from orchestrator.host_agent import HostAgentService
 from orchestrator.agent_server import router as agents_router
 from orchestrator.mitigation import MitigationConfig
 from orchestrator.case_analysis import analyze_case
+from shared.a2a_jsonrpc import (
+    build_agent_card,
+    build_artifact,
+    build_data_part,
+    build_task,
+    build_text_part,
+    extract_data,
+    extract_text,
+    jsonrpc_error,
+    jsonrpc_success,
+)
 from shared.a2a_types import A2AEnvelope
 
 
@@ -17,6 +32,9 @@ store = InMemoryStore()
 orch = Orchestrator(store)
 host = HostAgentService(store=store, orch=orch)
 router.include_router(agents_router)
+
+a2a_task_store: dict[str, dict] = {}
+a2a_task_store_lock = Lock()
 
 
 class IncidentBundle(BaseModel):
@@ -62,6 +80,100 @@ def get_case(case_id: str) -> dict:
 def health() -> dict:
     return {"ok": True}
 
+@router.get("/.well-known/agent.json")
+def well_known_agent_card(request: Request) -> dict:
+    base_url = str(request.base_url).rstrip("/")
+    skills = [
+        {
+            "id": "analyze_incident",
+            "name": "Analyze Incident",
+            "description": "Analyze an incident bundle or free-text description and return a SOC-style report.",
+            "tags": ["soc", "incident", "analysis"],
+            "examples": [
+                "User reports suspicious PowerShell activity and login failures.",
+                json.dumps({"title": "Demo", "events": [{"msg": "powershell spawned"}, {"msg": "login failure"}]}),
+            ],
+        }
+    ]
+    return build_agent_card(
+        name="AI-SOC Host Agent",
+        description="Host/orchestrator for AI-SOC agents (A2A Gateway + Orchestrator).",
+        url=base_url + "/a2a/rpc",
+        version="0.1.0",
+        streaming=False,
+        documentation_url=base_url + "/docs",
+        skills=skills,
+    )
+
+@router.post("/a2a/rpc")
+def a2a_jsonrpc(payload: dict, request: Request) -> dict:
+    """
+    Minimal A2A JSON-RPC compatibility endpoint for the Host Agent.
+    Supports:
+      - message/send  (synchronous)
+      - tasks/get     (in-memory, best-effort)
+    """
+    req_id = payload.get("id") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
+        return jsonrpc_error(req_id, code=-32600, message='Invalid JSON-RPC request (expected {"jsonrpc":"2.0",...})')
+
+    method = payload.get("method")
+    if not isinstance(method, str) or not method:
+        return jsonrpc_error(req_id, code=-32600, message="Invalid JSON-RPC request (missing method)")
+
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+
+    if method == "tasks/get":
+        task_id = params.get("id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            return jsonrpc_error(req_id, code=-32602, message="Invalid params (missing task id)")
+        with a2a_task_store_lock:
+            task = a2a_task_store.get(task_id)
+        if task is None:
+            return jsonrpc_error(req_id, code=-32001, message="Task not found")
+        return jsonrpc_success(req_id, result=task)
+
+    if method != "message/send":
+        return jsonrpc_error(req_id, code=-32601, message="Method not found")
+
+    msg = params.get("message") if isinstance(params.get("message"), dict) else {}
+    parts = msg.get("parts") if isinstance(msg.get("parts"), list) else []
+
+    context_id = msg.get("contextId") if isinstance(msg.get("contextId"), str) and msg.get("contextId").strip() else str(uuid4())
+    task_id = msg.get("taskId") if isinstance(msg.get("taskId"), str) and msg.get("taskId").strip() else str(uuid4())
+
+    text = extract_text(parts)
+    data_parts = extract_data(parts)
+    for d in data_parts:
+        # Convenience: allow sending an incident bundle as a data part.
+        if not isinstance(d, dict):
+            continue
+        candidate = d.get("incident_bundle") if isinstance(d.get("incident_bundle"), dict) else d
+        if isinstance(candidate, dict) and ("events" in candidate or "artifacts" in candidate or "title" in candidate):
+            text = json.dumps(candidate, ensure_ascii=False)
+            break
+
+    if not text:
+        return jsonrpc_error(req_id, code=-32602, message="Invalid params (message must include text or data)")
+
+    resp = host.handle_message(session_id=context_id, text=text)
+    sess = host.get_session(context_id)
+    state = "input-required" if (sess is not None and sess.triage_pending) else "completed"
+
+    artifacts = [
+        build_artifact(
+            name="reply",
+            description="Host Agent response",
+            parts=[
+                build_text_part(resp.get("reply") or ""),
+                build_data_part(resp if isinstance(resp, dict) else {"reply": str(resp)}),
+            ],
+        )
+    ]
+    task = build_task(task_id=task_id, context_id=context_id, state=state, artifacts=artifacts)
+    with a2a_task_store_lock:
+        a2a_task_store[task_id] = task
+    return jsonrpc_success(req_id, result=task)
 
 @router.post("/a2a/send")
 def a2a_send(envelope: A2AEnvelope) -> dict:
@@ -76,6 +188,8 @@ class CovertDemoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     channel: str = Field(default="timing", pattern="^(timing|storage|size)$")
+    topology: str = Field(default="single", pattern="^(single|mesh)$")
+    message: str | None = Field(default=None, min_length=1, max_length=64)
     # For a realistic demo, prefer server-side generation (so the "secret" is not typed or exposed).
     server_generate_bits: bool = True
     bits_len: int = Field(default=64, ge=8, le=256)
@@ -97,6 +211,8 @@ def demo_covert(req: CovertDemoRequest) -> dict:
         server_generate_bits=req.server_generate_bits,
         channel=req.channel,
         compare=req.compare,
+        topology=req.topology,
+        message=req.message,
         mitigation=MitigationConfig(jitter_ms=jitter, min_response_ms=int(req.min_response_ms)),
     )
 

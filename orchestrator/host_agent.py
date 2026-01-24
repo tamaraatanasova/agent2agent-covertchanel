@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 from uuid import uuid4
@@ -20,6 +22,7 @@ class HostSession:
     triage_bundle: dict[str, Any] | None = None
     triage_questions: list[str] = field(default_factory=list)
     triage_attempts: int = 0
+    covert_trigger_count: int = 0
 
 
 class HostAgentService:
@@ -36,12 +39,15 @@ class HostAgentService:
         self._lock = Lock()
         self._sessions: dict[str, HostSession] = {}
 
-    def create_session(self) -> HostSession:
-        session_id = str(uuid4())
-        sess = HostSession(session_id=session_id)
+    def create_session(self, *, session_id: str | None = None) -> HostSession:
+        sid = session_id or str(uuid4())
         with self._lock:
-            self._sessions[session_id] = sess
-        return sess
+            existing = self._sessions.get(sid)
+            if existing is not None:
+                return existing
+            sess = HostSession(session_id=sid)
+            self._sessions[sid] = sess
+            return sess
 
     def get_session(self, session_id: str) -> HostSession | None:
         with self._lock:
@@ -50,8 +56,9 @@ class HostAgentService:
     def handle_message(self, *, session_id: str, text: str) -> dict[str, Any]:
         sess = self.get_session(session_id)
         if sess is None:
-            sess = self.create_session()
-            session_id = sess.session_id
+            # Preserve the provided session_id when integrating with external A2A
+            # clients (maps cleanly to contextId).
+            sess = self.create_session(session_id=session_id)
 
         text = (text or "").strip()
         if not text:
@@ -104,7 +111,43 @@ class HostAgentService:
         result = self._orch.run_case(bundle)
         case_id = result.get("case_id")
         sess.last_case_id = case_id
-        sess.messages.append({"role": "assistant", "text": self._format_reply(result)})
+
+        reply = self._format_reply(result)
+        covert_summary: dict[str, Any] | None = None
+        try:
+            sess.covert_trigger_count += 1
+            trigger_index = sess.covert_trigger_count
+            triggered_at = datetime.now(timezone.utc).strftime("%H%M%SZ")
+            msg = f"Tamara[{trigger_index} {triggered_at}]"
+            channel = random.choice(["timing", "storage", "size"])
+            topology = "mesh" if channel == "timing" else "single"
+
+            # Run a short covert-channel send alongside the prompt.
+            # This demonstrates a timing channel across agents without requiring the user
+            # to click "Run" in the lab panel.
+            covert = self._orch.demo_covert(
+                channel=channel,
+                topology=topology,
+                compare=False,
+                message=msg,
+                single_mode="off",
+            )
+            sent = covert.get("message")
+            covert_case_id = covert.get("case_id")
+            covert_summary = {
+                "trigger_index": trigger_index,
+                "triggered_at": triggered_at,
+                "case_id": covert_case_id,
+                "channel": covert.get("channel"),
+                "sent": sent,
+                "topology": covert.get("topology"),
+            }
+            if case_id and covert_summary:
+                self._store.patch_incident_bundle(case_id, {"covert_trigger": covert_summary})
+        except Exception as e:
+            covert_summary = {"error": str(e) or "error"}
+
+        sess.messages.append({"role": "assistant", "text": reply})
 
         alerts: list[dict[str, Any]] = []
         if case_id:
@@ -112,7 +155,7 @@ class HostAgentService:
             if rec is not None:
                 alerts = rec.alerts
 
-        return {"session_id": session_id, "reply": self._format_reply(result), "case_id": case_id, "alerts": alerts}
+        return {"session_id": session_id, "reply": reply, "case_id": case_id, "alerts": alerts, "covert": covert_summary}
 
     def _handle_command(self, sess: HostSession, session_id: str, text: str) -> dict[str, Any] | None:
         cmd, *rest = text.strip().split(maxsplit=1)
