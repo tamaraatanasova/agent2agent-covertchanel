@@ -4,8 +4,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AI‑SOC Host Agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2" />
+  <title>Calendar Host Agent</title>
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
   <!-- Add this to your <head> -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,8 +17,8 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="logo">AI‑SOC</div>
-      <div class="subtitle">Host Agent · A2A Gateway · Covert Timing Defense</div>
+      <div class="logo">Calendar</div>
+      <div class="subtitle">Host Agent · A2A Trace · Covert Timing Demo</div>
     </div>
     <div class="top-actions">
       <a class="chip" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
@@ -30,7 +30,7 @@
     <aside class="rail rail-left">
       <section class="panel">
         <div class="panel-head">
-          <div class="panel-title">Case</div>
+          <div class="panel-title">Report</div>
           <div class="panel-meta">
             <span class="muted">Latest:</span>
             <a id="caseLink" class="mono" href="#" target="_blank" rel="noreferrer">—</a>
@@ -62,34 +62,38 @@
       <div id="messages" class="messages" aria-live="polite"></div>
 
       <div class="composer">
-        <textarea id="input" placeholder="Describe an incident (text) or paste a JSON incident bundle. Tip: if you paste a template prompt, put the real details after 'Incident:'. Ctrl+Enter to send."
+        <textarea id="input" placeholder="Try: “I’m Tamara — show my calendar for today.” Or: “Add 10am Gym tomorrow.” Ctrl+Enter to send."
           rows="3"></textarea>
         <div class="quickbar">
           <button id="commandsBtn" class="btn">Commands</button>
           <label class="quick-select">
-            <span class="sr-only">Sample incident</span>
-            <select id="sampleSelect" aria-label="Sample incidents">
-              <option value="cred_dump" selected>Sample: Credential dumping</option>
-              <option value="phishing">Sample: Phishing → OAuth token theft</option>
-              <option value="lateral">Sample: Lateral movement</option>
-              <option value="web_attack">Sample: Web attack</option>
+            <span class="sr-only">Sample prompt</span>
+            <select id="sampleSelect" aria-label="Sample prompts">
+              <option value="assistant_today" selected>Sample: Show today</option>
+              <option value="assistant_add">Sample: Add activity</option>
+              <option value="assistant_work">Sample: Work schedule (Mon–Fri)</option>
+              <option value="assistant_search">Sample: Search + edit</option>
             </select>
           </label>
           <button id="loadSampleBtn" class="btn">Load sample</button>
           <button id="copyCaseBtn" class="btn ghost" disabled>Copy case id</button>
         </div>
         <div class="composer-actions">
+          <label class="stream-toggle">
+            <input id="streamToggle" type="checkbox" checked />
+            <span>Stream</span>
+          </label>
           <button id="sendBtn" class="btn primary">Send</button>
           <button id="clearBtn" class="btn ghost">Clear</button>
         </div>
       </div>
     </section>
 
-    <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
+  <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
   </main>
 
 
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=5"></script>
 
   <div id="modal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop" id="modalBackdrop"></div>
@@ -104,20 +108,14 @@
             <div class="card-title">Commands</div>
             <div id="commandsList" class="list mono">/help
 /reset
-/last
-/case &lt;id&gt;
-/iocs [id|last]
-/mitre [id|last]
-/timeline [id|last]
-/export [id|last]</div>
-            <div class="muted tiny">Tip: paste JSON to skip triage questions.</div>
+/last</div>
           </div>
           <div class="card">
-            <div class="card-title">How to Write an Incident</div>
+            <div class="card-title">How to Ask</div>
             <div class="list muted">
-              Include: affected host(s), timeframe, what was observed, indicators (IPs/domains/URLs/hashes), and what controls alerted (EDR/SIEM).
+              Say what day you mean (today/tomorrow/date), the time (optional), and the activity.
             </div>
-            <div class="muted tiny">Example: “On pc-hr-01, winword.exe spawned powershell.exe; EDR flagged credential dumping. dc-01 shows 15 login failures for j.smith in 10 minutes.”</div>
+            <div class="muted tiny">Examples: “Show my calendar for today.” · “Add 14:00 Dentist tomorrow.” · “Delete 2.”</div>
           </div>
         </div>
       </div>

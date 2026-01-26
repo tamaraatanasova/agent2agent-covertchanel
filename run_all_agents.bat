@@ -22,7 +22,10 @@ start "ir_planner" cmd /k ""%PY%" -m uvicorn agents.ir_planner_service:app --hos
 start "compliance" cmd /k ""%PY%" -m uvicorn agents.compliance_service:app --host 127.0.0.1 --port 11005 --log-level info"
 start "report" cmd /k ""%PY%" -m uvicorn agents.report_service:app --host 127.0.0.1 --port 11006 --log-level info"
 start "malicious" cmd /k ""%PY%" -m uvicorn agents.malicious_service:app --host 127.0.0.1 --port 11007 --log-level info"
+start "calendar" cmd /k ""%PY%" -m uvicorn agents.calendar_service:app --host 127.0.0.1 --port 11008 --log-level info"
+start "calendar_view" cmd /k ""%PY%" -m uvicorn agents.calendar_view_service:app --host 127.0.0.1 --port 11009 --log-level info"
+start "calendar_edit" cmd /k ""%PY%" -m uvicorn agents.calendar_edit_service:app --host 127.0.0.1 --port 11010 --log-level info"
 
-echo Started agents on ports 11001-11007.
+echo Started agents on ports 11001-11010.
 echo Start the gateway with: set A2A_REMOTE_AGENTS=1 ^&^& uvicorn main:app --reload
 endlocal

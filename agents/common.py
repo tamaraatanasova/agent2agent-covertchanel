@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from shared.a2a_keys import KeyRegistry, load_private_key_b64, security_enabled
 from shared.a2a_jsonrpc import (
@@ -20,9 +21,11 @@ from shared.a2a_jsonrpc import (
     jsonrpc_error,
     jsonrpc_success,
     parse_json_object,
+    utc_now_iso,
 )
 from shared.a2a_types import A2AEnvelope, MessageType, A2ASecurity
 from shared.a2a_types import A2ATask
+from shared.webhooks import post_json
 
 
 def create_agent_app(*, name: str, description: str, tasks: list[str], handler) -> FastAPI:
@@ -45,6 +48,32 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
 
     a2a_task_store: dict[str, dict[str, Any]] = {}
     a2a_task_store_lock = Lock()
+
+    def _task_set_state(task: dict[str, Any], state: str) -> None:
+        status = task.get("status")
+        if not isinstance(status, dict):
+            status = {}
+            task["status"] = status
+        status["state"] = str(state)
+        status["timestamp"] = utc_now_iso()
+
+        hist = task.get("history")
+        if not isinstance(hist, list):
+            hist = []
+            task["history"] = hist
+        hist.append({"state": status["state"], "timestamp": status["timestamp"]})
+
+    def _sse(event: str, data: dict[str, Any]) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    def _maybe_push(task: dict[str, Any], event: str, data: dict[str, Any]) -> None:
+        url = task.get("pushNotificationUrl")
+        if not isinstance(url, str):
+            return
+        u = url.strip()
+        if not (u.startswith("http://") or u.startswith("https://")):
+            return
+        post_json(u, {"event": event, "data": data})
 
     @router.get("/.well-known/agent.json")
     def well_known_agent_card(request: Request) -> dict[str, Any]:
@@ -69,7 +98,9 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
             description=description,
             url=base_url,
             version="0.1.0",
-            streaming=False,
+            streaming=True,
+            push_notifications=True,
+            state_transition_history=True,
             documentation_url=base_url.rstrip("/") + "/docs",
             skills=skills,
         )
@@ -78,8 +109,8 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
     def agent_card() -> dict[str, Any]:
         return {"name": name, "description": description, "tasks": tasks}
 
-    @router.post("/")
-    def a2a_jsonrpc(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    @router.post("/", response_model=None)
+    def a2a_jsonrpc(payload: dict[str, Any], request: Request) -> dict[str, Any] | StreamingResponse:
         """
         Minimal A2A JSON-RPC compatibility:
         - POST /            (message/send, tasks/get)
@@ -107,7 +138,27 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
                 return jsonrpc_error(req_id, code=-32001, message="Task not found")
             return jsonrpc_success(req_id, result=task)
 
-        if method != "message/send":
+        if method == "tasks/pushNotificationSet":
+            task_id = params.get("id") or params.get("taskId")
+            url = params.get("url") or params.get("pushNotificationUrl") or params.get("webhookUrl")
+            if not isinstance(task_id, str) or not task_id.strip():
+                return jsonrpc_error(req_id, code=-32602, message="Invalid params (missing task id)")
+            if not isinstance(url, str) or not url.strip():
+                return jsonrpc_error(req_id, code=-32602, message="Invalid params (missing url)")
+            u = url.strip()
+            if not (u.startswith("http://") or u.startswith("https://")):
+                return jsonrpc_error(req_id, code=-32602, message="Invalid params (url must start with http:// or https://)")
+
+            with a2a_task_store_lock:
+                task = a2a_task_store.get(task_id)
+                if task is None:
+                    return jsonrpc_error(req_id, code=-32001, message="Task not found")
+                task["pushNotificationUrl"] = u
+                a2a_task_store[task_id] = task
+            _maybe_push(task, "TaskSnapshotEvent", {"taskId": task_id, "task": task})
+            return jsonrpc_success(req_id, result={"ok": True, "taskId": task_id})
+
+        if method not in ("message/send", "tasks/send", "message/sendSubscribe", "tasks/sendSubscribe"):
             return jsonrpc_error(req_id, code=-32601, message="Method not found")
 
         msg = params.get("message") if isinstance(params.get("message"), dict) else {}
@@ -115,6 +166,8 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
 
         context_id = msg.get("contextId") if isinstance(msg.get("contextId"), str) and msg.get("contextId").strip() else str(uuid4())
         task_id = msg.get("taskId") if isinstance(msg.get("taskId"), str) and msg.get("taskId").strip() else str(uuid4())
+        push_url = params.get("pushNotificationUrl") or params.get("push_notification_url") or params.get("webhookUrl")
+        push_url = push_url.strip() if isinstance(push_url, str) and push_url.strip() else None
 
         candidates = extract_data(parts)
         text_obj = parse_json_object(extract_text(parts))
@@ -156,6 +209,70 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
         if not isinstance(task_params, dict):
             task_params = {}
 
+        if method in ("message/sendSubscribe", "tasks/sendSubscribe"):
+            accept = (request.headers.get("accept") or "").lower()
+            if "text/event-stream" not in accept:
+                return jsonrpc_error(req_id, code=-32600, message="sendSubscribe requires Accept: text/event-stream")
+
+            task = build_task(task_id=task_id, context_id=context_id, state="submitted", artifacts=None, history=[])
+            _task_set_state(task, "submitted")
+            if push_url and (push_url.startswith("http://") or push_url.startswith("https://")):
+                task["pushNotificationUrl"] = push_url
+            with a2a_task_store_lock:
+                a2a_task_store[task_id] = task
+
+            def gen():
+                _maybe_push(task, "TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
+                yield _sse("TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
+                try:
+                    _task_set_state(task, "working")
+                    with a2a_task_store_lock:
+                        a2a_task_store[task_id] = task
+                    _maybe_push(task, "TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
+                    yield _sse("TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
+
+                    output = handler(A2ATask(name=task_name, parameters=task_params))
+                    if not isinstance(output, dict):
+                        output = {"output": output}
+
+                    artifacts = [
+                        build_artifact(
+                            name="result",
+                            description=f"{name}:{task_name} output",
+                            parts=[
+                                build_data_part(output),
+                                build_text_part(json.dumps(output, ensure_ascii=False)[:8000]),
+                            ],
+                        )
+                    ]
+                    existing = task.get("artifacts")
+                    if not isinstance(existing, list):
+                        existing = []
+                        task["artifacts"] = existing
+                    existing.extend(artifacts)
+                    with a2a_task_store_lock:
+                        a2a_task_store[task_id] = task
+                    _maybe_push(task, "TaskArtifactUpdateEvent", {"taskId": task_id, "artifact": artifacts[0]})
+                    yield _sse("TaskArtifactUpdateEvent", {"taskId": task_id, "artifact": artifacts[0]})
+
+                    _task_set_state(task, "completed")
+                    with a2a_task_store_lock:
+                        a2a_task_store[task_id] = task
+                    _maybe_push(task, "TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
+                    yield _sse("TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
+                except Exception as e:
+                    _task_set_state(task, "failed")
+                    task["error"] = {"code": "AGENT_ERROR", "message": str(e) or "error"}
+                    with a2a_task_store_lock:
+                        a2a_task_store[task_id] = task
+                    _maybe_push(task, "TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status"), "error": task.get("error")})
+                    yield _sse(
+                        "TaskStatusUpdateEvent",
+                        {"taskId": task_id, "status": task.get("status"), "error": task.get("error")},
+                    )
+
+            return StreamingResponse(gen(), media_type="text/event-stream")
+
         try:
             output = handler(A2ATask(name=task_name, parameters=task_params))
             if not isinstance(output, dict):
@@ -173,9 +290,13 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
                 ],
             )
         ]
-        task = build_task(task_id=task_id, context_id=context_id, state="completed", artifacts=artifacts)
+        task = build_task(task_id=task_id, context_id=context_id, state="completed", artifacts=artifacts, history=[])
+        _task_set_state(task, "completed")
+        if push_url and (push_url.startswith("http://") or push_url.startswith("https://")):
+            task["pushNotificationUrl"] = push_url
         with a2a_task_store_lock:
             a2a_task_store[task_id] = task
+        _maybe_push(task, "TaskSnapshotEvent", {"taskId": task_id, "task": task})
         return jsonrpc_success(req_id, result=task)
 
     @router.post("/a2a")
