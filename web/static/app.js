@@ -6,25 +6,10 @@ let latestCaseId = null;
 const el = (id) => document.getElementById(id);
 
 const SAMPLES = {
-  cred_dump:
-    "Title: Suspicious PowerShell + credential dumping\n" +
-    "Incident: On pc-hr-01, winword.exe spawned powershell.exe. EDR flagged possible mimikatz/lsass access. Shortly after, dc-01 shows 15 login failures for user j.smith in 10 minutes. Possible lateral movement.\n" +
-    "Notes: Please summarize, map to MITRE, list IOCs, and propose a triage + containment plan (policy-safe).",
-  phishing:
-    "Title: Phishing → OAuth token abuse\n" +
-    "Incident: Multiple users reported a fake Microsoft 365 login page. User a.ivanov clicked the link and completed login. Later, CAS/IdP logs show unusual OAuth consent granted to app 'MailSyncPro' and mailbox rules created to auto-forward invoices to external address.\n" +
-    "Indicators: URL https://login-microsoft-security[.]com/ , external recipient billing-dept@protonmail.com\n" +
-    "Request: Identify containment actions and evidence to preserve.",
-  lateral:
-    "Title: Suspected lateral movement via SMB\n" +
-    "Incident: From host ws-17, we observed connections to multiple internal hosts over SMB (445) within 5 minutes. EDR shows psexec-like service creation and remote cmd execution attempts. New local admin account 'svc-backup' appeared on two machines.\n" +
-    "Indicators: account svc-backup, ports 445/135, process psexesvc.exe\n" +
-    "Timeframe: last 10 minutes",
-  web_attack:
-    "Title: Web attack / possible credential stuffing\n" +
-    "Incident: Web gateway logs show repeated POST /login attempts from 185.199.110.153 against 200+ usernames. Some successes followed by access to /admin. WAF shows spikes in 401/403 and rate-limit triggers.\n" +
-    "Indicators: IP 185.199.110.153, endpoint /login\n" +
-    "Timeframe: 2026-01-22 21:10–21:25",
+  assistant_today: "I'm Tamara — show my calendar for today.",
+  assistant_add: "I'm Tamara — add 10am Gym today.",
+  assistant_work: "I'm Tamara — I'm working every day from 9 to 5 in Imbrium from Monday to Friday.",
+  assistant_search: "I'm Tamara — add 14:00 Dentist tomorrow, then search for Dentist.",
 };
 
 async function fetchJson(url, options) {
@@ -610,7 +595,7 @@ async function copyCaseId() {
   if (!latestCaseId) return;
   try {
     await navigator.clipboard.writeText(latestCaseId);
-    addBubble("system", `Copied case id: ${latestCaseId}`);
+    addBubble("system", `Copied report id: ${latestCaseId}`);
   } catch {
     addBubble("system", "Copy failed (clipboard permission).");
   }
@@ -620,10 +605,10 @@ function loadSample() {
   const sel = el("sampleSelect");
   const input = el("input");
   if (!sel || !input) return;
-  const key = sel.value || "cred_dump";
-  input.value = SAMPLES[key] || SAMPLES.cred_dump;
+  const key = sel.value || "assistant_today";
+  input.value = SAMPLES[key] || SAMPLES.assistant_today;
   input.focus();
-  addBubble("system", "Loaded sample incident into the input box.");
+  addBubble("system", "Loaded sample prompt into the input box.");
 }
 
 function wire() {

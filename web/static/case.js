@@ -210,8 +210,11 @@ async function loadCase() {
   el("analysisBox").textContent = summarizeAnalysis(analysis);
 
   const covert = analysis ? analysis.covert : null;
-  el("covertCaseBox").classList.toggle("muted", !covert);
-  el("covertCaseBox").textContent = summarizeCovert(covert);
+  const covertBox = el("covertCaseBox");
+  if (covertBox) {
+    covertBox.classList.toggle("muted", !covert);
+    covertBox.textContent = summarizeCovert(covert);
+  }
 
   el("outputsBox").classList.toggle("muted", !data.agent_outputs);
   el("outputsBox").textContent = data.agent_outputs ? pretty(data.agent_outputs) : "—";

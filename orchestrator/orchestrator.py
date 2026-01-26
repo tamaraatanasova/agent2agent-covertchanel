@@ -429,7 +429,9 @@ class Orchestrator:
         if mitigation is not None:
             self.configure_mitigation(mitigation)
 
-        agents = list(AGENT_URLS.keys())
+        # Keep the covert-channel demo scoped to SOC agents (avoid pulling in unrelated assistant agents).
+        covert_demo_agents = ("telemetry", "threat_intel", "anomaly", "ir_planner", "compliance", "report", "malicious")
+        agents = [a for a in covert_demo_agents if a in AGENT_URLS]
         mesh_edges = [(a, b) for a in agents for b in agents if a != b]
         use_full_mesh = topology == "mesh" and bool(mesh_edges) and not self._require_sig
 

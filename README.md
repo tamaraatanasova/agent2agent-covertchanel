@@ -45,6 +45,7 @@ curl -X POST http://127.0.0.1:8000/cases -H "content-type: application/json" -d 
   - `/last`, `/case <id>`
   - `/iocs [id|last]`, `/mitre [id|last]`, `/timeline [id|last]`
   - `/export [id|last]`, `/reset`
+- Personal assistant demo: run `/assistant`, then ask “I’m Tamara, show my calendar for today”.
 
 ## Multi-process (agent-to-agent over HTTP)
 
@@ -60,6 +61,9 @@ uvicorn agents.ir_planner_service:app --port 11004
 uvicorn agents.compliance_service:app --port 11005
 uvicorn agents.report_service:app --port 11006
 uvicorn agents.malicious_service:app --port 11007
+uvicorn agents.calendar_service:app --port 11008
+uvicorn agents.calendar_view_service:app --port 11009
+uvicorn agents.calendar_edit_service:app --port 11010
 ```
 
 2) Start the gateway in remote mode:
@@ -90,6 +94,8 @@ If signatures are enabled and keys are missing, the app will ask you to generate
 ## LLM mode (optional)
 
 Replace toy heuristics with an LLM for `threat_intel` and `report`:
+
+Tip: you can either `set ...` env vars in your terminal, or create a local `.env` file in the repo root (auto-loaded by `main.py`). See `.env.gemini.example`.
 
 - Ollama:
   - `set LLM_PROVIDER=ollama`

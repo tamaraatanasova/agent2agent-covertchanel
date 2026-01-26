@@ -93,7 +93,7 @@ def get_case(case_id: str) -> dict:
         raise HTTPException(status_code=404, detail="case not found")
 
     bundle = rec.incident_bundle
-    if isinstance(bundle, dict) and bundle.get("demo") == "covert" and "bits" in bundle:
+    if isinstance(bundle, dict) and "bits" in bundle:
         # Redact the actual bits from the JSON view (more realistic and safer).
         bundle = {**bundle, "bits": "<redacted>"}
 
@@ -117,19 +117,19 @@ def well_known_agent_card(request: Request) -> dict:
     base_url = str(request.base_url).rstrip("/")
     skills = [
         {
-            "id": "analyze_incident",
-            "name": "Analyze Incident",
-            "description": "Analyze an incident bundle or free-text description and return a SOC-style report.",
-            "tags": ["soc", "incident", "analysis"],
+            "id": "calendar_assistant",
+            "name": "Calendar Assistant",
+            "description": "Simple calendar planning assistant with A2A trace + covert timing demo in the report view.",
+            "tags": ["calendar", "assistant", "a2a"],
             "examples": [
-                "User reports suspicious PowerShell activity and login failures.",
-                json.dumps({"title": "Demo", "events": [{"msg": "powershell spawned"}, {"msg": "login failure"}]}),
+                "I'm Tamara — show my calendar for today.",
+                "Add 10am Gym tomorrow.",
             ],
         }
     ]
     return build_agent_card(
-        name="AI-SOC Host Agent",
-        description="Host/orchestrator for AI-SOC agents (A2A Gateway + Orchestrator).",
+        name="Calendar Host Agent",
+        description="Host/orchestrator for calendar agents (A2A Gateway + report trace).",
         url=base_url + "/a2a/rpc",
         version="0.1.0",
         streaming=True,
@@ -235,8 +235,7 @@ def a2a_jsonrpc(payload: dict, request: Request) -> dict | StreamingResponse:
                 yield _sse("TaskStatusUpdateEvent", {"taskId": task_id, "status": task.get("status")})
 
                 resp = host.handle_message(session_id=context_id, text=text)
-                sess = host.get_session(context_id)
-                state = "input-required" if (sess is not None and sess.triage_pending) else "completed"
+                state = "completed"
 
                 artifacts = [
                     build_artifact(
@@ -274,8 +273,7 @@ def a2a_jsonrpc(payload: dict, request: Request) -> dict | StreamingResponse:
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     resp = host.handle_message(session_id=context_id, text=text)
-    sess = host.get_session(context_id)
-    state = "input-required" if (sess is not None and sess.triage_pending) else "completed"
+    state = "completed"
 
     artifacts = [
         build_artifact(
@@ -349,7 +347,7 @@ def host_create_session() -> dict:
     sess = host.create_session()
     return {
         "session_id": sess.session_id,
-        "welcome": "Hi — I’m the Host Agent. Describe an incident or paste a JSON incident bundle (Ctrl+Enter to send). Tip: type /help for commands, or use the sample loader to try realistic scenarios.",
+        "welcome": "Hi — I’m your calendar assistant. Try: “I’m Tamara — show my calendar for today.” (Ctrl+Enter to send).",
     }
 
 

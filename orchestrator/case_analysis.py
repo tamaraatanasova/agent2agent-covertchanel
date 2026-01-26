@@ -114,7 +114,8 @@ def _trace_stats(rec: CaseRecord) -> dict[str, Any]:
 
 def _covert_analysis(rec: CaseRecord) -> dict[str, Any] | None:
     bundle = rec.incident_bundle or {}
-    if bundle.get("demo") != "covert":
+    bits = str(bundle.get("bits") or "")
+    if not bits:
         trigger = bundle.get("covert_trigger") if isinstance(bundle, dict) else None
         if isinstance(trigger, dict) and trigger:
             return {
@@ -125,11 +126,6 @@ def _covert_analysis(rec: CaseRecord) -> dict[str, Any] | None:
                 "triggered_at": trigger.get("triggered_at"),
             }
         return None
-
-    bits = str(bundle.get("bits") or "")
-    if not bits:
-        return {"channel": bundle.get("channel"), "error": "missing_bits"}
-
     def bits_to_text(decoded_bits: str) -> str:
         buf = bytearray()
         for i in range(0, len(decoded_bits), 8):
