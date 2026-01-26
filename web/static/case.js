@@ -121,7 +121,6 @@ function summarizeCovert(covert) {
     const acc = met ? `${(met.accuracy * 100).toFixed(1)}%` : "n/a";
     const n = met ? `${met.sample_count}` : "n/a";
     lines.push(`- ${m}: BER=${ber} acc=${acc} n=${n}`);
-    if (r.decoded_message) lines.push(`  decoded_message=${String(r.decoded_message)}`);
   }
   return lines.join("\n");
 }
@@ -158,14 +157,14 @@ function renderMessages(messages, filterText) {
   for (const r of rows) {
     html.push(
       `<details class="tr">` +
-        `<summary class="tds">` +
-          `<div class="td mono">${escapeHtml(r.type)}</div>` +
-          `<div class="td mono">${escapeHtml(r.from)}</div>` +
-          `<div class="td mono">${escapeHtml(r.to)}</div>` +
-          `<div class="td mono">${escapeHtml(r.task || "-")}</div>` +
-          `<div class="td mono">${escapeHtml(r.total || "-")}</div>` +
-        `</summary>` +
-        `<pre class="code">${escapeHtml(pretty(r.raw))}</pre>` +
+      `<summary class="tds">` +
+      `<div class="td mono">${escapeHtml(r.type)}</div>` +
+      `<div class="td mono">${escapeHtml(r.from)}</div>` +
+      `<div class="td mono">${escapeHtml(r.to)}</div>` +
+      `<div class="td mono">${escapeHtml(r.task || "-")}</div>` +
+      `<div class="td mono">${escapeHtml(r.total || "-")}</div>` +
+      `</summary>` +
+      `<pre class="code">${escapeHtml(pretty(r.raw))}</pre>` +
       `</details>`
     );
   }

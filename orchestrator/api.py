@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 from threading import Lock
 from uuid import uuid4
 
@@ -11,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from orchestrator.orchestrator import Orchestrator
 from orchestrator.store import InMemoryStore
 from orchestrator.host_agent import HostAgentService
+from orchestrator.auth import AuthSessions, AuthStore, AuthUser
 from orchestrator.agent_server import router as agents_router
 from orchestrator.mitigation import MitigationConfig
 from orchestrator.case_analysis import analyze_case
@@ -34,10 +37,45 @@ router = APIRouter()
 store = InMemoryStore()
 orch = Orchestrator(store)
 host = HostAgentService(store=store, orch=orch)
+auth_store = AuthStore()
+
+
+def _session_ttl_hours() -> int:
+    try:
+        return int(os.getenv("AUTH_SESSION_TTL_HOURS", "24"))
+    except ValueError:
+        return 24
+
+
+auth_sessions = AuthSessions(ttl_hours=_session_ttl_hours())
 router.include_router(agents_router)
 
 a2a_task_store: dict[str, dict] = {}
 a2a_task_store_lock = Lock()
+
+
+def _auth_user_dict(user: AuthUser) -> dict:
+    return {
+        "id": user.user_id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "created_at": user.created_at,
+    }
+
+
+def _extract_auth_token(request: Request) -> str | None:
+    token = request.headers.get("x-auth-token") or request.cookies.get("auth_token")
+    if token:
+        return token
+    auth = request.headers.get("authorization") or ""
+    if isinstance(auth, str) and auth.lower().startswith("bearer "):
+        return auth.split(None, 1)[1].strip()
+    return None
+
+
+def _get_auth_user(request: Request) -> AuthUser | None:
+    token = _extract_auth_token(request)
+    return auth_sessions.get(token)
 
 
 def _task_set_state(task: dict, state: str) -> None:
@@ -110,6 +148,59 @@ def get_case(case_id: str) -> dict:
 
 @router.get("/health")
 def health() -> dict:
+    return {"ok": True}
+
+
+class AuthRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=3, max_length=64, pattern="^[A-Za-z0-9._@+-]+$")
+    password: str = Field(min_length=6, max_length=128)
+    display_name: str | None = Field(default=None, min_length=1, max_length=40)
+
+
+class AuthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=3, max_length=64, pattern="^[A-Za-z0-9._@+-]+$")
+    password: str = Field(min_length=6, max_length=128)
+
+
+@router.post("/auth/register")
+def auth_register(req: AuthRegisterRequest) -> dict:
+    try:
+        user = auth_store.create_user(username=req.username, password=req.password, display_name=req.display_name)
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="username already exists")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    token = auth_sessions.create(user)
+    return {"token": token, "user": _auth_user_dict(user)}
+
+
+@router.post("/auth/login")
+def auth_login(req: AuthLoginRequest) -> dict:
+    user = auth_store.authenticate(username=req.username, password=req.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = auth_sessions.create(user)
+    return {"token": token, "user": _auth_user_dict(user)}
+
+
+@router.get("/auth/me")
+def auth_me(request: Request) -> dict:
+    user = _get_auth_user(request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    return {"user": _auth_user_dict(user)}
+
+
+@router.post("/auth/logout")
+def auth_logout(request: Request) -> dict:
+    token = _extract_auth_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="not authenticated")
+    auth_sessions.revoke(token)
     return {"ok": True}
 
 @router.get("/.well-known/agent.json")
@@ -197,6 +288,14 @@ def a2a_jsonrpc(payload: dict, request: Request) -> dict | StreamingResponse:
     task_id = msg.get("taskId") if isinstance(msg.get("taskId"), str) and msg.get("taskId").strip() else str(uuid4())
     push_url = params.get("pushNotificationUrl") or params.get("push_notification_url") or params.get("webhookUrl")
     push_url = push_url.strip() if isinstance(push_url, str) and push_url.strip() else None
+    auth_user = _get_auth_user(request)
+    if auth_user:
+        host.set_session_user(
+            session_id=context_id,
+            user=auth_user.display_name,
+            username=auth_user.username,
+            user_id=auth_user.user_id,
+        )
 
     text = extract_text(parts)
     data_parts = extract_data(parts)
@@ -341,14 +440,45 @@ class HostMessageRequest(BaseModel):
 
     text: str = Field(min_length=1, max_length=50_000)
 
-
 @router.post("/host/sessions")
-def host_create_session() -> dict:
+def host_create_session(request: Request) -> dict:
     sess = host.create_session()
-    return {
-        "session_id": sess.session_id,
-        "welcome": "Hi — I’m your calendar assistant. Try: “I’m Tamara — show my calendar for today.” (Ctrl+Enter to send).",
-    }
+    auth_user = _get_auth_user(request)
+    if auth_user:
+        host.set_session_user(
+            session_id=sess.session_id,
+            user=auth_user.display_name,
+            username=auth_user.username,
+            user_id=auth_user.user_id,
+        )
+        welcome = f"Hi {auth_user.display_name}, I am your calendar assistant. Try: \"Show my calendar for today.\" (Ctrl+Enter to send)."
+    else:
+        welcome = "Hi, I am your calendar assistant. Try: \"I am Tamara - show my calendar for today.\" (Ctrl+Enter to send)."
+    return {"session_id": sess.session_id, "welcome": welcome}
+
+
+class HostSessionUserRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user: str | None = Field(default=None, min_length=1, max_length=64)
+    auth_user_id: str | None = None
+
+
+@router.post("/host/sessions/{session_id}/user")
+def host_bind_user(session_id: str, req: HostSessionUserRequest, request: Request) -> dict:
+    auth_user = _get_auth_user(request)
+    if auth_user:
+        user = auth_user.display_name
+        username = auth_user.username
+        user_id = auth_user.user_id
+    else:
+        user = req.user.strip() if isinstance(req.user, str) else ""
+        username = None
+        user_id = req.auth_user_id
+    if not user:
+        raise HTTPException(status_code=400, detail="user is required")
+    sess = host.set_session_user(session_id=session_id, user=user, username=username, user_id=user_id)
+    return {"session_id": sess.session_id, "user": user}
 
 
 @router.post("/host/sessions/{session_id}/messages")

@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Calendar Host Agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/styles.css?v=7" />
   <!-- Add this to your <head> -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,87 +15,126 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">Calendar</div>
-      <div class="subtitle">Host Agent · A2A Trace · Covert Timing Demo</div>
-    </div>
-    <div class="top-actions">
-      <a class="chip" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
-      <a class="chip" href="/health" target="_blank" rel="noreferrer">Health</a>
-    </div>
-  </header>
-
-  <main class="layout layout-2col">
-    <aside class="rail rail-left">
-      <section class="panel">
-        <div class="panel-head">
-          <div class="panel-title">Report</div>
-          <div class="panel-meta">
-            <span class="muted">Latest:</span>
-            <a id="caseLink" class="mono" href="#" target="_blank" rel="noreferrer">—</a>
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-shell">
+      <div class="auth-card">
+        <div class="auth-logo">Calendar Host Agent</div>
+        <div class="auth-tagline">Sign in to reach your personal calendar assistant.</div>
+        <div id="authStatus" class="auth-status muted tiny">Use your account to continue.</div>
+        <div class="auth-tabs">
+          <button id="authLoginTab" class="btn sm active" type="button">Login</button>
+          <button id="authRegisterTab" class="btn sm ghost" type="button">Create</button>
+        </div>
+        <div class="auth-form">
+          <input id="authUsername" type="text" placeholder="Username or email" autocomplete="username" />
+          <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
+          <input id="authDisplayName" class="hidden" type="text" placeholder="Display name (for calendar)" autocomplete="name" />
+          <button id="authSubmitBtn" class="btn primary" type="button">Login</button>
+          <div id="authMessage" class="tiny muted"></div>
+        </div>
+        <div class="auth-footer tiny muted">Passwords are hashed and stored locally in SQLite.</div>
+      </div>
+      <div class="auth-hero">
+        <div class="hero-title">Your calendar agent is ready.</div>
+        <div class="hero-subtitle">Secure, fast, and tuned for natural language scheduling.</div>
+        <div class="hero-grid">
+          <div class="hero-card">
+            <div class="hero-label">Private by default</div>
+            <div class="hero-text">Accounts and events live in local SQLite storage.</div>
+          </div>
+          <div class="hero-card">
+            <div class="hero-label">Agent trace</div>
+            <div class="hero-text">Every request is traced through the A2A gateway.</div>
+          </div>
+          <div class="hero-card">
+            <div class="hero-label">Natural language</div>
+            <div class="hero-text">Ask in plain English. Get structured calendar actions.</div>
           </div>
         </div>
-        <div class="cards">
-          <div class="card">
-            <div class="card-title">Agents</div>
-            <div id="agentList" class="list muted">Loading agents…</div>
-          </div>
+      </div>
+    </div>
+  </div>
 
-          <div class="card">
-            <div class="card-title">Alerts</div>
-            <div id="alerts" class="list muted">No alerts yet.</div>
+  <div id="appScreen" class="app-screen hidden">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">Calendar</div>
+        <div class="subtitle">Host Agent · A2A Trace · Covert Timing Demo</div>
+      </div>
+      <div class="top-actions">
+        <button id="authLogoutBtn" class="chip chip-btn" type="button">Logout</button>
+        <a class="chip" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+        <a class="chip" href="/health" target="_blank" rel="noreferrer">Health</a>
+      </div>
+    </header>
+
+    <main class="layout layout-2col">
+      <aside class="rail rail-left">
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Report</div>
+            <div class="panel-meta">
+              <span class="muted">Latest:</span>
+              <a id="caseLink" class="mono" href="#" target="_blank" rel="noreferrer">—</a>
+            </div>
+          </div>
+          <div class="cards">
+            <div class="card">
+              <div class="card-title">Agents</div>
+              <div id="agentList" class="list muted">Loading agents…</div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Alerts</div>
+              <div id="alerts" class="list muted">No alerts yet.</div>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="panel chat">
+        <div class="panel-head">
+          <div class="panel-title">Host Agent</div>
+          <div class="panel-meta">
+            <span class="muted">Session:</span>
+            <span id="sessionId" class="mono">—</span>
+          </div>
+        </div>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <div class="composer">
+          <textarea id="input" placeholder="Try: “Show my calendar for today.” Or: “Add 10am Gym tomorrow.” Ctrl+Enter to send."
+            rows="3"></textarea>
+          <div class="quickbar">
+            <button id="commandsBtn" class="btn">Commands</button>
+            <label class="quick-select">
+              <span class="sr-only">Sample prompt</span>
+              <select id="sampleSelect" aria-label="Sample prompts">
+                <option value="assistant_today" selected>Sample: Show today</option>
+                <option value="assistant_add">Sample: Add activity</option>
+                <option value="assistant_work">Sample: Work schedule (Mon–Fri)</option>
+                <option value="assistant_search">Sample: Search + edit</option>
+              </select>
+            </label>
+            <button id="loadSampleBtn" class="btn">Load sample</button>
+            <button id="copyCaseBtn" class="btn ghost" disabled>Copy case id</button>
+          </div>
+          <div class="composer-actions">
+            <label class="stream-toggle">
+              <input id="streamToggle" type="checkbox" checked />
+              <span>Stream</span>
+            </label>
+            <button id="sendBtn" class="btn primary">Send</button>
+            <button id="clearBtn" class="btn ghost">Clear</button>
           </div>
         </div>
       </section>
-    </aside>
 
-    <section class="panel chat">
-      <div class="panel-head">
-        <div class="panel-title">Host Agent</div>
-        <div class="panel-meta">
-          <span class="muted">Session:</span>
-          <span id="sessionId" class="mono">—</span>
-        </div>
-      </div>
+    <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
+    </main>
 
-      <div id="messages" class="messages" aria-live="polite"></div>
-
-      <div class="composer">
-        <textarea id="input" placeholder="Try: “I’m Tamara — show my calendar for today.” Or: “Add 10am Gym tomorrow.” Ctrl+Enter to send."
-          rows="3"></textarea>
-        <div class="quickbar">
-          <button id="commandsBtn" class="btn">Commands</button>
-          <label class="quick-select">
-            <span class="sr-only">Sample prompt</span>
-            <select id="sampleSelect" aria-label="Sample prompts">
-              <option value="assistant_today" selected>Sample: Show today</option>
-              <option value="assistant_add">Sample: Add activity</option>
-              <option value="assistant_work">Sample: Work schedule (Mon–Fri)</option>
-              <option value="assistant_search">Sample: Search + edit</option>
-            </select>
-          </label>
-          <button id="loadSampleBtn" class="btn">Load sample</button>
-          <button id="copyCaseBtn" class="btn ghost" disabled>Copy case id</button>
-        </div>
-        <div class="composer-actions">
-          <label class="stream-toggle">
-            <input id="streamToggle" type="checkbox" checked />
-            <span>Stream</span>
-          </label>
-          <button id="sendBtn" class="btn primary">Send</button>
-          <button id="clearBtn" class="btn ghost">Clear</button>
-        </div>
-      </div>
-    </section>
-
-  <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
-  </main>
-
-
-  <script src="/static/app.js?v=5"></script>
-
-  <div id="modal" class="modal hidden" aria-hidden="true">
+    <div id="modal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop" id="modalBackdrop"></div>
     <div class="modal-card" role="dialog" aria-modal="true" aria-label="Commands and samples">
       <div class="modal-head">
@@ -121,6 +160,9 @@
       </div>
     </div>
   </div>
+  </div>
+
+  <script src="/static/app.js?v=7"></script>
 </body>
 
 </html>

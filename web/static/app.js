@@ -2,6 +2,9 @@
 
 let sessionId = null;
 let latestCaseId = null;
+let authToken = null;
+let authUser = null;
+let authMode = "login";
 
 const el = (id) => document.getElementById(id);
 
@@ -12,18 +15,20 @@ const SAMPLES = {
   assistant_search: "I'm Tamara — add 14:00 Dentist tomorrow, then search for Dentist.",
 };
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
+async function fetchJson(url, options = {}) {
+  const opts = options || {};
+  const headers = new Headers(opts.headers || {});
+  if (authToken) headers.set("x-auth-token", authToken);
+  opts.headers = headers;
+
+  const res = await fetch(url, opts);
   const ct = (res.headers.get("content-type") || "").toLowerCase();
   const isJson = ct.includes("application/json") || ct.includes("application/problem+json");
 
   if (isJson) {
     const data = await res.json();
     if (!res.ok) {
-      const msg =
-        (data && data.error && data.error.message) ||
-        (data && data.detail) ||
-        `Request failed (${res.status})`;
+      const msg = formatErrorMessage(data, res.status);
       throw new Error(msg);
     }
     return data;
@@ -32,6 +37,194 @@ async function fetchJson(url, options) {
   const text = await res.text();
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text || "Request failed"}`);
   throw new Error(`Unexpected non-JSON response: ${text || res.statusText}`);
+}
+
+function formatErrorMessage(data, status) {
+  if (data && data.error && data.error.message != null) {
+    return String(data.error.message);
+  }
+  const detail = data ? data.detail : null;
+  if (detail != null) {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      const parts = detail
+        .map((item) => {
+          if (!item) return "";
+          if (typeof item === "string") return item;
+          if (typeof item === "object") return item.msg || item.message || JSON.stringify(item);
+          return String(item);
+        })
+        .filter(Boolean);
+      if (parts.length) return parts.join(" | ");
+    } else if (typeof detail === "object") {
+      return detail.msg || detail.message || JSON.stringify(detail);
+    } else {
+      return String(detail);
+    }
+  }
+  return `Request failed (${status || "error"})`;
+}
+
+function setAuthMessage(text, isError = false) {
+  const msg = el("authMessage");
+  if (!msg) return;
+  msg.textContent = text || "";
+  if (isError) {
+    msg.classList.remove("muted");
+  } else {
+    msg.classList.add("muted");
+  }
+}
+
+function errorText(err) {
+  if (err && typeof err === "object" && err.message) return String(err.message);
+  return String(err);
+}
+
+function setScreen(signedIn) {
+  const authScreen = el("authScreen");
+  const appScreen = el("appScreen");
+  if (authScreen) authScreen.classList.toggle("hidden", signedIn);
+  if (appScreen) appScreen.classList.toggle("hidden", !signedIn);
+}
+
+function setAuthMode(mode) {
+  authMode = mode === "register" ? "register" : "login";
+  const display = el("authDisplayName");
+  const submit = el("authSubmitBtn");
+  const loginTab = el("authLoginTab");
+  const registerTab = el("authRegisterTab");
+  if (display) display.classList.toggle("hidden", authMode !== "register");
+  if (submit) submit.textContent = authMode === "register" ? "Create account" : "Login";
+  if (loginTab) loginTab.classList.toggle("active", authMode === "login");
+  if (registerTab) registerTab.classList.toggle("active", authMode === "register");
+  setAuthMessage("");
+}
+
+function setAuthState(user) {
+  authUser = user || null;
+  const status = el("authStatus");
+  const logoutBtn = el("authLogoutBtn");
+  const submitBtn = el("authSubmitBtn");
+  const loginTab = el("authLoginTab");
+  const registerTab = el("authRegisterTab");
+  const usernameInput = el("authUsername");
+  const passwordInput = el("authPassword");
+  const displayInput = el("authDisplayName");
+
+  const signedIn = Boolean(user);
+  if (status) status.textContent = signedIn ? `Signed in as ${user.display_name}` : "Sign in to continue.";
+  if (logoutBtn) logoutBtn.classList.toggle("hidden", !signedIn);
+  if (submitBtn) submitBtn.classList.toggle("hidden", signedIn);
+  if (loginTab) loginTab.disabled = signedIn;
+  if (registerTab) registerTab.disabled = signedIn;
+  [usernameInput, passwordInput, displayInput].forEach((input) => {
+    if (!input) return;
+    input.disabled = signedIn;
+  });
+  if (displayInput) {
+    if (signedIn) {
+      displayInput.classList.add("hidden");
+    } else {
+      displayInput.classList.toggle("hidden", authMode !== "register");
+    }
+  }
+  if (!signedIn) setAuthMode(authMode);
+  setScreen(signedIn);
+}
+
+async function enterApp() {
+  setScreen(true);
+  if (el("messages")) el("messages").innerHTML = "";
+  setAlerts([]);
+  setCaseLink("");
+  await loadAgents();
+  await createSession();
+}
+
+async function bindSessionUser() {
+  if (!sessionId || !authToken) return;
+  try {
+    await fetchJson(`/host/sessions/${sessionId}/user`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  } catch (e) {
+    setAuthMessage(`Failed to bind user: ${errorText(e)}`, true);
+  }
+}
+
+async function submitAuth() {
+  const username = (el("authUsername") && el("authUsername").value || "").trim();
+  const password = (el("authPassword") && el("authPassword").value || "").trim();
+  const displayName = (el("authDisplayName") && el("authDisplayName").value || "").trim();
+
+  if (!username || !password) {
+    setAuthMessage("Username and password are required.", true);
+    return;
+  }
+
+  const endpoint = authMode === "register" ? "/auth/register" : "/auth/login";
+  const payload = { username, password };
+  if (authMode === "register" && displayName) payload.display_name = displayName;
+
+  try {
+    setAuthMessage(authMode === "register" ? "Creating account..." : "Signing in...");
+    const data = await fetchJson(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    authToken = data.token;
+    localStorage.setItem("authToken", authToken);
+    setAuthState(data.user);
+    await enterApp();
+    await bindSessionUser();
+    addBubble("system", `Signed in as ${data.user.display_name}.`);
+  } catch (e) {
+    setAuthMessage(errorText(e), true);
+  }
+}
+
+async function logoutAuth() {
+  try {
+    if (authToken) {
+      await fetchJson("/auth/logout", { method: "POST" });
+    }
+  } catch (e) {
+    setAuthMessage(errorText(e), true);
+  } finally {
+    authToken = null;
+    authUser = null;
+    localStorage.removeItem("authToken");
+    setAuthState(null);
+    sessionId = null;
+    latestCaseId = null;
+    setCaseLink("");
+    if (el("messages")) el("messages").innerHTML = "";
+    setAuthMessage("Signed out.");
+  }
+}
+
+async function initAuth() {
+  authToken = localStorage.getItem("authToken");
+  if (authToken) {
+    try {
+      const data = await fetchJson("/auth/me");
+      setAuthState(data.user);
+      await enterApp();
+      await bindSessionUser();
+      return;
+    } catch {
+      authToken = null;
+      localStorage.removeItem("authToken");
+    }
+  } else {
+    authToken = null;
+  }
+  setAuthMode("login");
+  setAuthState(null);
 }
 
 function addBubble(kind, text) {
@@ -63,8 +256,13 @@ function setAlerts(alerts) {
 function setCaseLink(caseId) {
   latestCaseId = caseId;
   const link = el("caseLink");
-  link.textContent = caseId;
-  link.href = `/case/${caseId}`;
+  if (!caseId) {
+    link.textContent = "—";
+    link.href = "#";
+  } else {
+    link.textContent = caseId;
+    link.href = `/case/${caseId}`;
+  }
   const copyBtn = el("copyCaseBtn");
   if (copyBtn) copyBtn.disabled = !caseId;
 }
@@ -379,9 +577,11 @@ async function sendMessageStream(text) {
     },
   };
 
+  const headers = { "content-type": "application/json", accept: "text/event-stream" };
+  if (authToken) headers["x-auth-token"] = authToken;
   const res = await fetch("/a2a/rpc", {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "text/event-stream" },
+    headers,
     body: JSON.stringify(payload),
   });
 
@@ -389,10 +589,7 @@ async function sendMessageStream(text) {
     const ct = (res.headers.get("content-type") || "").toLowerCase();
     if (ct.includes("application/json")) {
       const data = await res.json();
-      const msg =
-        (data && data.error && data.error.message) ||
-        (data && data.detail) ||
-        `Request failed (${res.status})`;
+      const msg = formatErrorMessage(data, res.status);
       throw new Error(msg);
     }
     const t = await res.text();
@@ -646,6 +843,25 @@ function wire() {
   const copyBtn = el("copyCaseBtn");
   if (copyBtn) copyBtn.addEventListener("click", () => void copyCaseId());
 
+  const loginTab = el("authLoginTab");
+  if (loginTab) loginTab.addEventListener("click", () => setAuthMode("login"));
+  const registerTab = el("authRegisterTab");
+  if (registerTab) registerTab.addEventListener("click", () => setAuthMode("register"));
+  const submitBtn = el("authSubmitBtn");
+  if (submitBtn) submitBtn.addEventListener("click", () => void submitAuth());
+  const logoutBtn = el("authLogoutBtn");
+  if (logoutBtn) logoutBtn.addEventListener("click", () => void logoutAuth());
+
+  const authInputs = [el("authUsername"), el("authPassword"), el("authDisplayName")].filter(Boolean);
+  authInputs.forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void submitAuth();
+      }
+    });
+  });
+
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeModal();
   });
@@ -653,6 +869,5 @@ function wire() {
 
 window.addEventListener("DOMContentLoaded", () => {
   wire();
-  void loadAgents();
-  void createSession();
+  void initAuth();
 });
