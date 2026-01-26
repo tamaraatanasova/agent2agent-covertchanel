@@ -55,6 +55,7 @@ function addBubble(kind, text) {
   bubble.textContent = text;
   el("messages").appendChild(bubble);
   el("messages").scrollTop = el("messages").scrollHeight;
+  return bubble;
 }
 
 function setAlerts(alerts) {
@@ -365,14 +366,128 @@ async function createSession() {
   }
 }
 
+function makeTaskId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  return `task_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
+function pickPart(parts, kind) {
+  if (!Array.isArray(parts)) return null;
+  for (const p of parts) {
+    if (p && typeof p === "object" && p.kind === kind) return p;
+  }
+  return null;
+}
+
+async function sendMessageStream(text) {
+  const taskId = makeTaskId();
+  const payload = {
+    jsonrpc: "2.0",
+    id: taskId,
+    method: "message/sendSubscribe",
+    params: {
+      message: {
+        contextId: sessionId,
+        taskId,
+        parts: [{ kind: "text", text }],
+      },
+    },
+  };
+
+  const res = await fetch("/a2a/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "text/event-stream" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("application/json")) {
+      const data = await res.json();
+      const msg =
+        (data && data.error && data.error.message) ||
+        (data && data.detail) ||
+        `Request failed (${res.status})`;
+      throw new Error(msg);
+    }
+    const t = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${t || "Request failed"}`);
+  }
+
+  const statusBubble = addBubble("system", "Stream: submitted…");
+  const decoder = new TextDecoder("utf-8");
+  const reader = res.body.getReader();
+  let buf = "";
+
+  const handleEvent = (event, data) => {
+    if (event === "TaskStatusUpdateEvent") {
+      const st = data && data.status ? data.status : null;
+      const state = st && st.state ? st.state : "working";
+      statusBubble.textContent = `Stream: ${state}…`;
+      return;
+    }
+
+    if (event === "TaskArtifactUpdateEvent") {
+      const art = data && data.artifact ? data.artifact : null;
+      const parts = art && art.parts ? art.parts : [];
+      const dataPart = pickPart(parts, "data");
+      const textPart = pickPart(parts, "text");
+      const resp = dataPart && dataPart.data ? dataPart.data : null;
+      const reply = (resp && resp.reply) || (textPart && textPart.text) || "No reply.";
+
+      if (resp && resp.case_id) setCaseLink(resp.case_id);
+      if (resp && resp.alerts) setAlerts(resp.alerts);
+      if (resp && resp.case_id) void refreshCase(resp.case_id);
+
+      addBubble("assistant", reply);
+      // Covert channel auto-demo is intentionally hidden from the chat UI.
+      return;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    const frames = buf.split("\n\n");
+    buf = frames.pop() || "";
+    for (const frame of frames) {
+      const lines = frame.split("\n");
+      let event = "";
+      const dataLines = [];
+      for (const line of lines) {
+        if (!line || line.startsWith(":")) continue;
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) continue;
+      const raw = dataLines.join("\n");
+      let obj = null;
+      try {
+        obj = JSON.parse(raw);
+      } catch {
+        // ignore
+      }
+      handleEvent(event, obj);
+    }
+  }
+}
+
 async function sendMessage(text) {
   el("sendBtn").disabled = true;
   const covertBtn = el("covertBtn");
   if (covertBtn) covertBtn.disabled = true;
   addBubble("user", text);
-  addBubble("system", "Host agent routing tasks to agents…");
+  const useStream = Boolean(el("streamToggle") && el("streamToggle").checked);
+  if (!useStream) addBubble("system", "Host agent routing tasks to agents…");
 
   try {
+    if (useStream) {
+      await sendMessageStream(text);
+      return;
+    }
+
     const data = await fetchJson(`/host/sessions/${sessionId}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -384,16 +499,7 @@ async function sendMessage(text) {
     if (data.case_id) void refreshCase(data.case_id);
 
     addBubble("assistant", data.reply || "No reply.");
-    if (data.covert) {
-      const covert = data.covert || {};
-      if (covert.error) {
-        addBubble("system", `Covert channel - error - ${covert.error}`);
-      } else {
-        const channel = covert.channel || "timing";
-        const msg = covert.sent || covert.decoded || "Tamara";
-        addBubble("assistant", `Covert channel - ${channel} - ${msg}`);
-      }
-    }
+    // Covert channel auto-demo is intentionally hidden from the chat UI.
   } catch (e) {
     addBubble("system", `Error: ${String(e)}`);
   } finally {
@@ -447,7 +553,6 @@ async function runCovertDemo() {
         decoded = decodedObj.observer_total_ms || decodedObj.agent_elapsed_ms || decodedObj.observer_size_bytes;
       }
     }
-    addBubble("assistant", `Covert channel - ${channel} - ${decoded || message}`);
   } catch (e) {
     setCovertResult({ bits: buildBits(), channel: (el("covertChannel") && el("covertChannel").value) || "timing", error: String(e) });
     addBubble("system", `Error: ${String(e)}`);

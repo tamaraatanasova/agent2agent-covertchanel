@@ -79,6 +79,8 @@ def build_agent_card(
     skills: list[dict[str, Any]],
     version: str = "0.1.0",
     streaming: bool = False,
+    push_notifications: bool = False,
+    state_transition_history: bool = False,
     documentation_url: str | None = None,
 ) -> dict[str, Any]:
     card: dict[str, Any] = {
@@ -88,7 +90,11 @@ def build_agent_card(
         "version": str(version),
         "defaultInputModes": ["text/plain", "application/json"],
         "defaultOutputModes": ["text/plain", "application/json"],
-        "capabilities": {"streaming": bool(streaming), "pushNotifications": False, "stateTransitionHistory": False},
+        "capabilities": {
+            "streaming": bool(streaming),
+            "pushNotifications": bool(push_notifications),
+            "stateTransitionHistory": bool(state_transition_history),
+        },
         "skills": skills,
     }
     if documentation_url:
@@ -132,4 +138,3 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
     except Exception:
         return None
     return obj if isinstance(obj, dict) else None
-

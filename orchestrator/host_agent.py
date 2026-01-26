@@ -118,7 +118,7 @@ class HostAgentService:
             sess.covert_trigger_count += 1
             trigger_index = sess.covert_trigger_count
             triggered_at = datetime.now(timezone.utc).strftime("%H%M%SZ")
-            msg = f"Tamara[{trigger_index} {triggered_at}]"
+            msg = random.choice(["Hello from covert", "Covert channel message", "Tamara says hi"])
             channel = random.choice(["timing", "storage", "size"])
             topology = "mesh" if channel == "timing" else "single"
 

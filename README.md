@@ -33,8 +33,9 @@ curl -X POST http://127.0.0.1:8000/cases -H "content-type: application/json" -d 
 - A2A activation: `POST /agents/{name}/a2a` also supports `HEARTBEAT` envelopes to verify agent connectivity.
 - A2A SDK compatibility (google/a2a-python style):
   - Agent Card: `GET /.well-known/agent.json`
-  - Host JSON-RPC: `POST /a2a/rpc` (`message/send`, `tasks/get`)
-  - Standalone agent JSON-RPC: `POST /` (`message/send`, `tasks/get`) + `GET /.well-known/agent.json`
+  - Host JSON-RPC: `POST /a2a/rpc` (`message/send`, `message/sendSubscribe`, `tasks/get`, `tasks/pushNotificationSet`)
+  - Standalone agent JSON-RPC: `POST /` (`message/send`, `message/sendSubscribe`, `tasks/get`, `tasks/pushNotificationSet`) + `GET /.well-known/agent.json`
+  - Streaming: `message/sendSubscribe` uses Server-Sent Events (SSE); send `Accept: text/event-stream`.
 
 ## Host Agent tips (UI)
 
@@ -98,3 +99,7 @@ Replace toy heuristics with an LLM for `threat_intel` and `report`:
   - `set LLM_PROVIDER=openai`
   - `set OPENAI_API_KEY=...`
   - `set LLM_MODEL=gpt-4o-mini`
+- Gemini:
+  - `set LLM_PROVIDER=gemini`
+  - `set GEMINI_API_KEY=...` (or `GOOGLE_API_KEY=...`)
+  - `set LLM_MODEL=gemini-1.5-flash`

@@ -517,6 +517,20 @@ textarea:focus {
   margin-top: 0.75rem;
 }
 
+.stream-toggle {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.stream-toggle input {
+  accent-color: var(--accent);
+}
+
 .btn:focus-visible,
 textarea:focus-visible,
 select:focus-visible,

@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI‑SOC Host Agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2" />
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
   <!-- Add this to your <head> -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -79,17 +79,21 @@
           <button id="copyCaseBtn" class="btn ghost" disabled>Copy case id</button>
         </div>
         <div class="composer-actions">
+          <label class="stream-toggle">
+            <input id="streamToggle" type="checkbox" checked />
+            <span>Stream</span>
+          </label>
           <button id="sendBtn" class="btn primary">Send</button>
           <button id="clearBtn" class="btn ghost">Clear</button>
         </div>
       </div>
     </section>
 
-    <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
+  <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
   </main>
 
 
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=4"></script>
 
   <div id="modal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop" id="modalBackdrop"></div>
