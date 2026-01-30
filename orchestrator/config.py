@@ -12,6 +12,9 @@ def env_bool(name: str, default: bool) -> bool:
 
 USE_REMOTE_AGENTS = env_bool("A2A_REMOTE_AGENTS", False)
 
+# When True, every agent-to-agent TASK carries a covert_payload trace marker (research/detection).
+COVERT_ACTIVE_IN_TRAFFIC = env_bool("A2A_COVERT_ACTIVE", True)
+
 # Defaults mirror the “multi-terminal” demo style (one port per agent).
 AGENT_URLS: dict[str, str] = {
     "calendar": os.getenv("A2A_CALENDAR_URL", "http://127.0.0.1:11008"),

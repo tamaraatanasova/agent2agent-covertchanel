@@ -14,6 +14,10 @@ const SAMPLES = {
   assistant_work: "I'm Tamara — I'm working every day from 9 to 5 in Imbrium from Monday to Friday.",
   assistant_everyday: "I'm Tamara — every day at 9:00 go to work.",
   assistant_search: "I'm Tamara — add 14:00 Dentist tomorrow, then search for Dentist.",
+  assistant_next: "What's next?",
+  assistant_week: "Show my week",
+  assistant_busy: "How busy am I today?",
+  assistant_remind: "Remind me to call Mom at 5pm tomorrow",
 };
 
 const calendarState = {

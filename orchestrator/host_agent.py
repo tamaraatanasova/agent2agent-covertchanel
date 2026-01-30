@@ -114,6 +114,55 @@ class HostAgentService:
             sess.messages.append({"role": "assistant", "text": reply})
             return {"session_id": session_id, "reply": reply, "case_id": sess.last_case_id}
 
+        if cmd == "/assistant":
+            user = self._session_user(sess)
+            reply = f"Hi {user}! I'm your calendar assistant. Try: “Show my calendar for today”, “Add 10am Gym”, “What's next?”, or “Show my week”."
+            sess.messages.append({"role": "assistant", "text": reply})
+            return {"session_id": session_id, "reply": reply, "case_id": sess.last_case_id}
+
+        case_id = self._resolve_case_id(sess, arg)
+        if cmd == "/case":
+            if not case_id:
+                reply = "No case found. Use /case <id> or /last first."
+            else:
+                rec = self._store.get_case(case_id)
+                summary = self._summarize_case(rec) if rec else f"Case: {case_id}"
+                reply = f"{summary}\n\nOpen: /case/{case_id}"
+            sess.messages.append({"role": "assistant", "text": reply})
+            return {"session_id": session_id, "reply": reply, "case_id": case_id}
+
+        if cmd == "/iocs":
+            if not case_id:
+                reply = "No case. Use /iocs last or /iocs <case_id>."
+            else:
+                reply = self._format_case_iocs(case_id)
+            sess.messages.append({"role": "assistant", "text": reply})
+            return {"session_id": session_id, "reply": reply, "case_id": case_id}
+
+        if cmd == "/mitre":
+            if not case_id:
+                reply = "No case. Use /mitre last or /mitre <case_id>."
+            else:
+                reply = self._format_case_mitre(case_id)
+            sess.messages.append({"role": "assistant", "text": reply})
+            return {"session_id": session_id, "reply": reply, "case_id": case_id}
+
+        if cmd == "/timeline":
+            if not case_id:
+                reply = "No case. Use /timeline last or /timeline <case_id>."
+            else:
+                reply = self._format_case_timeline(case_id)
+            sess.messages.append({"role": "assistant", "text": reply})
+            return {"session_id": session_id, "reply": reply, "case_id": case_id}
+
+        if cmd == "/export":
+            if not case_id:
+                reply = "No case. Use /export last or /export <case_id>."
+            else:
+                reply = self._format_case_export(session_id, case_id)
+            sess.messages.append({"role": "assistant", "text": reply})
+            return {"session_id": session_id, "reply": reply, "case_id": case_id}
+
         if cmd == "/reset":
             sess.assistant_pending = None
             sess.last_case_id = None
@@ -136,6 +185,68 @@ class HostAgentService:
             return {"session_id": session_id, "reply": reply, "case_id": sess.last_case_id, "alerts": (rec.alerts if rec else [])}
 
         return None
+
+    def _resolve_case_id(self, sess: HostSession, arg: str) -> str | None:
+        a = (arg or "").strip().lower()
+        if a == "last" or not a:
+            return sess.last_case_id if sess.last_case_id and self._store.get_case(sess.last_case_id) else None
+        return arg.strip() if self._store.get_case(arg.strip()) else None
+
+    def _format_case_iocs(self, case_id: str) -> str:
+        rec = self._store.get_case(case_id)
+        if not rec:
+            return f"Case {case_id} not found."
+        ti = (rec.agent_outputs or {}).get("threat_intel") or {}
+        iocs = ti.get("iocs") or {}
+        if not iocs or not any(iocs.values()):
+            return f"Case {case_id}: No IOCs extracted."
+        lines = [f"IOCs for case {case_id}:"]
+        for k, v in iocs.items():
+            if isinstance(v, list) and v:
+                lines.append(f"  {k}: {', '.join(str(x) for x in v[:20])}{'…' if len(v) > 20 else ''}")
+            elif v:
+                lines.append(f"  {k}: {v}")
+        return "\n".join(lines)
+
+    def _format_case_mitre(self, case_id: str) -> str:
+        rec = self._store.get_case(case_id)
+        if not rec:
+            return f"Case {case_id} not found."
+        ti = (rec.agent_outputs or {}).get("threat_intel") or {}
+        mitre = ti.get("mitre_techniques") or []
+        if not mitre:
+            return f"Case {case_id}: No MITRE techniques mapped."
+        return f"Case {case_id} — MITRE: {', '.join(sorted(mitre))}"
+
+    def _format_case_timeline(self, case_id: str) -> str:
+        rec = self._store.get_case(case_id)
+        if not rec:
+            return f"Case {case_id} not found."
+        report = rec.final_report or {}
+        timeline = report.get("timeline") or []
+        if timeline:
+            lines = [f"Timeline for case {case_id}:"]
+            for i, ev in enumerate(timeline[:20], 1):
+                if isinstance(ev, dict):
+                    lines.append(f"  {i}. {ev.get('event', ev)}")
+                else:
+                    lines.append(f"  {i}. {ev}")
+            return "\n".join(lines)
+        lines = [f"Case {case_id}: {len(rec.messages)} message(s), {len(rec.alerts)} alert(s)."]
+        if report.get("executive_summary"):
+            lines.append(str(report["executive_summary"])[:500])
+        return "\n".join(lines)
+
+    def _format_case_export(self, session_id: str, case_id: str) -> str:
+        rec = self._store.get_case(case_id)
+        if not rec:
+            return f"Case {case_id} not found."
+        return (
+            f"Case {case_id}\n"
+            f"Open in browser: /case/{case_id}\n"
+            f"API: GET /cases/{case_id}\n"
+            f"Messages: {len(rec.messages)}, Alerts: {len(rec.alerts)}"
+        )
 
     def _maybe_handle_assistant(self, sess: HostSession, session_id: str, text: str) -> dict[str, Any] | None:
         if sess.auth_user:
@@ -218,6 +329,13 @@ class HostAgentService:
             "plan my day",
             "my day",
             "free today",
+            "what's next",
+            "next event",
+            "show my week",
+            "week view",
+            "how busy",
+            "hello",
+            "hi ",
         )
         if any(k in t for k in keywords):
             return True
@@ -519,6 +637,34 @@ class HostAgentService:
 
         if any(k in lowered for k in ("help", "what can you do", "commands")):
             reply = self._assistant_help(user=user)
+            return reply, self._assistant_state(user=user, day=day, items=items)
+
+        if re.search(r"\b(hello|hi)\b", lowered) and len(lowered.split()) <= 2:
+            reply = f"Hi {user}! I'm your calendar assistant. Say “Show my calendar for today”, “What's next?”, or “Add 10am Gym”."
+            return reply, self._assistant_state(user=user, day=day, items=items)
+
+        if any(k in lowered for k in ("what's next", "next event", "what do i have next", "whats next")):
+            reply, state = self._assistant_next_event(case_id=case_id, user=user, today=today)
+            return reply, state
+
+        if any(k in lowered for k in ("show my week", "week view", "this week", "my week")):
+            reply, state = self._assistant_week_view(case_id=case_id, user=user, today=today)
+            return reply, state
+
+        if any(k in lowered for k in ("how busy", "how many events", "how many things", "busy today")):
+            reply = self._assistant_how_busy(user=user, day=day, today=today, items=items)
+            return reply, self._assistant_state(user=user, day=day, items=items)
+
+        if re.search(r"\bremind\s+me\s+to\b", lowered):
+            remind_text = re.sub(r"^\s*remind\s+me\s+to\s+", "", (text or "").strip(), flags=re.IGNORECASE).strip()
+            time_str, title, duration = self._assistant_extract_time_and_title(remind_text)
+            if title:
+                items = self._calendar_add(case_id=case_id, user=user, day=day, title=f"Reminder: {title}", time=time_str, duration_minutes=duration or 15)
+                reply = f"Reminder added: “{title}” for {day.strftime('%A')}." + (
+                    f" at {time_str}" if time_str else ""
+                ) + f"\n\n{self._assistant_format_day(user=user, day=day, today=today, items=items)}"
+                return reply, self._assistant_state(user=user, day=day, items=items)
+            reply = "What should I remind you of? Example: “Remind me to call Mom at 5pm”."
             return reply, self._assistant_state(user=user, day=day, items=items)
 
         if re.search(r"\b(search|find)\b", lowered):
@@ -1086,14 +1232,54 @@ class HostAgentService:
     def _assistant_help(self, *, user: str) -> str:
         return (
             f"Hi {user}! I can help you manage a simple calendar.\n\n"
+            "Commands: /help, /last, /case [id|last], /iocs, /mitre, /timeline, /export, /assistant, /reset\n\n"
             "Try:\n"
-            "- “Show my calendar for today”\n"
-            "- “Add 10am Gym”\n"
-            "- “Add 14:00 Dentist tomorrow”\n"
-            "- “Delete 2”\n"
-            "- “Clear today”\n"
-            "- “Switch to SOC mode”"
+            "- “Show my calendar for today” or “Show my week”\n"
+            "- “What's next?” — next upcoming event\n"
+            "- “Add 10am Gym” or “Remind me to call Mom at 5pm”\n"
+            "- “Delete 2”, “Clear today”\n"
+            "- “How busy am I today?”"
         )
+
+    def _assistant_next_event(self, *, case_id: str, user: str, today: date) -> tuple[str, dict[str, Any]]:
+        """Next upcoming event across the next 14 days."""
+        from datetime import timedelta
+        for d in range(0, 14):
+            day = today + timedelta(days=d)
+            items = self._calendar_list_day(case_id=case_id, user=user, day=day)
+            with_time = [(i, it) for i, it in enumerate(items, 1) if it.time]
+            if with_time:
+                it = with_time[0][1]
+                day_label = day.strftime("%A, %B %d") if d > 0 else "Today"
+                reply = f"Next up: {it.display()} — {day_label}."
+                return reply, self._assistant_state(user=user, day=day, items=items)
+        reply = f"{user}, no upcoming events in the next two weeks. Want to add something?"
+        return reply, self._assistant_state(user=user, day=today, items=[])
+
+    def _assistant_week_view(self, *, case_id: str, user: str, today: date) -> tuple[str, dict[str, Any]]:
+        """Next 7 days with item counts and first event."""
+        from datetime import timedelta
+        lines = [f"{user}, your week ahead:"]
+        all_items: list[CalendarItem] = []
+        for d in range(0, 7):
+            day = today + timedelta(days=d)
+            items = self._calendar_list_day(case_id=case_id, user=user, day=day)
+            all_items.extend(items)
+            label = "Today" if d == 0 else ("Tomorrow" if d == 1 else day.strftime("%A"))
+            if not items:
+                lines.append(f"  {label}: free")
+            else:
+                first = items[0].display()
+                lines.append(f"  {label}: {len(items)} — {first[:60]}{'…' if len(first) > 60 else ''}")
+        state_day = today
+        state_items = self._calendar_list_day(case_id=case_id, user=user, day=state_day)
+        return "\n".join(lines), self._assistant_state(user=user, day=state_day, items=state_items)
+
+    def _assistant_how_busy(self, *, user: str, day: date, today: date, items: list[CalendarItem]) -> str:
+        if not items:
+            return f"{user}, you're free on {day.strftime('%A')} — no events."
+        total_m = sum((it.duration_minutes or 30) for it in items)
+        return f"{user}, on {day.strftime('%A')} you have {len(items)} event(s) (~{total_m // 60}h {total_m % 60}m)."
 
     def _assistant_state(self, *, user: str, day: date, items: list[CalendarItem]) -> dict[str, Any]:
         return {"user": user, "day": day.isoformat(), "items": [it.model_dump() for it in items]}

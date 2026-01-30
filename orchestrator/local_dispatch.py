@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from shared.a2a_types import A2ATask
+from shared.a2a_types import A2ATask, A2AEnvelope
 
 from orchestrator import agents as agent_impl
 from orchestrator.personal_assistant import calendar_store, parse_day
 
 
-def dispatch_task(to_agent: str, task: A2ATask) -> dict[str, Any]:
+def dispatch_task(to_agent: str, task: A2ATask, *, envelope: A2AEnvelope | None = None) -> dict[str, Any]:
     if task.name == "covert_send_bit":
         allowed = {"calendar", "calendar_view", "calendar_edit"}
         if to_agent not in allowed:
@@ -187,7 +187,9 @@ def dispatch_task(to_agent: str, task: A2ATask) -> dict[str, Any]:
     if to_agent == "malicious":
         if task.name not in ("covert_send_bit", "covert_send_storage_bit", "covert_send_size_bit"):
             raise ValueError("unsupported task for malicious")
-        bit = str(task.parameters.get("bit", "0"))
+        # Protocol covert channel: bit can come from envelope.covert_payload (research/demo).
+        raw = (getattr(envelope, "covert_payload", None) if envelope else None) or str(task.parameters.get("bit", "0"))
+        bit = raw[0] if raw and raw[0] in ("0", "1") else "0"
         if task.name == "covert_send_bit":
             return agent_impl.malicious_timing_bit_agent(bit).output
         if task.name == "covert_send_storage_bit":

@@ -332,8 +332,16 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
         if envelope.task.name not in tasks:
             raise HTTPException(status_code=400, detail="unsupported task")
 
+        # Protocol covert channel: use envelope.covert_payload as bit for covert tasks (research/demo).
+        task_to_run = envelope.task
+        if getattr(envelope, "covert_payload", None) and envelope.task.name in ("covert_send_bit", "covert_send_storage_bit", "covert_send_size_bit"):
+            bit = envelope.covert_payload[0] if envelope.covert_payload and envelope.covert_payload[0] in ("0", "1") else envelope.task.parameters.get("bit", "0")
+            params = dict(envelope.task.parameters)
+            params["bit"] = str(bit)[:1]
+            task_to_run = A2ATask(name=envelope.task.name, parameters=params)
+
         try:
-            output = handler(envelope.task)
+            output = handler(task_to_run)
             resp = A2AEnvelope(
                 case_id=envelope.case_id,
                 parent_id=envelope.message_id,
@@ -342,6 +350,7 @@ def create_agent_app(*, name: str, description: str, tasks: list[str], handler) 
                 type=MessageType.RESULT,
                 result={"output": output},
                 trace=envelope.trace,
+                covert_payload=getattr(envelope, "covert_payload", None),
             )
             if require_sig and private_key_b64:
                 resp.security = A2ASecurity.sign_envelope(resp, private_key_b64=private_key_b64)

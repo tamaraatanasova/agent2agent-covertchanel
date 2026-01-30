@@ -425,7 +425,7 @@ def a2a_send(envelope: A2AEnvelope) -> dict:
 class CovertDemoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    channel: str = Field(default="timing", pattern="^(timing|storage|size)$")
+    channel: str = Field(default="timing", pattern="^(timing|storage|size|protocol)$")
     topology: str = Field(default="single", pattern="^(single|mesh)$")
     message: str | None = Field(default=None, min_length=1, max_length=64)
     # For a realistic demo, prefer server-side generation (so the "secret" is not typed or exposed).

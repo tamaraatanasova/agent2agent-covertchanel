@@ -70,7 +70,7 @@ def agent_a2a(name: str, envelope: A2AEnvelope) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="expected TASK with task (or HEARTBEAT)")
 
     try:
-        output = local_dispatch_task(name, envelope.task)
+        output = local_dispatch_task(name, envelope.task, envelope=envelope)
         resp = A2AEnvelope(
             case_id=envelope.case_id,
             parent_id=envelope.message_id,
@@ -79,6 +79,7 @@ def agent_a2a(name: str, envelope: A2AEnvelope) -> dict[str, Any]:
             type=MessageType.RESULT,
             result={"output": output},
             trace=envelope.trace,
+            covert_payload=getattr(envelope, "covert_payload", None),
         )
         return resp.model_dump()
     except Exception as e:
