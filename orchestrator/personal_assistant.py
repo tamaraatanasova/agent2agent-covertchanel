@@ -36,14 +36,39 @@ class CalendarItem:
     day: str  # YYYY-MM-DD
     title: str
     time: str | None = None  # HH:MM (24h) or None
+    duration_minutes: int | None = None
 
     def display(self) -> str:
         if self.time:
+            if self.duration_minutes:
+                end = self._calc_end_time()
+                if end:
+                    return f"{self.time}–{end} ({self.duration_minutes}m) — {self.title}"
+                return f"{self.time} ({self.duration_minutes}m) — {self.title}"
             return f"{self.time} — {self.title}"
         return self.title
 
+    def _calc_end_time(self) -> str | None:
+        if not self.time or not self.duration_minutes:
+            return None
+        try:
+            h, m = self.time.split(":", 1)
+            start = int(h) * 60 + int(m)
+            end = (start + int(self.duration_minutes)) % (24 * 60)
+            eh = end // 60
+            em = end % 60
+            return f"{eh:02d}:{em:02d}"
+        except Exception:
+            return None
+
     def model_dump(self) -> dict[str, Any]:
-        return {"id": self.item_id, "day": self.day, "time": self.time, "title": self.title}
+        return {
+            "id": self.item_id,
+            "day": self.day,
+            "time": self.time,
+            "title": self.title,
+            "duration_minutes": self.duration_minutes,
+        }
 
 
 class CalendarStore:
@@ -66,12 +91,17 @@ class CalendarStore:
               user TEXT NOT NULL,
               day TEXT NOT NULL,
               time TEXT,
+              duration_minutes INTEGER,
               title TEXT NOT NULL,
               created_at TEXT NOT NULL
             )
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_calendar_user_day ON calendar_items(user, day)")
+        try:
+            conn.execute("ALTER TABLE calendar_items ADD COLUMN duration_minutes INTEGER")
+        except sqlite3.OperationalError:
+            pass
 
     @staticmethod
     def _order_by_sql() -> str:
@@ -82,28 +112,66 @@ class CalendarStore:
         key = day.isoformat()
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT id, day, title, time FROM calendar_items WHERE user = ? AND day = ? ORDER BY {self._order_by_sql()}",
+                f"SELECT id, day, title, time, duration_minutes FROM calendar_items WHERE user = ? AND day = ? ORDER BY {self._order_by_sql()}",
                 (str(user), key),
             ).fetchall()
-        return [CalendarItem(item_id=str(r["id"]), day=str(r["day"]), title=str(r["title"]), time=(str(r["time"]) if r["time"] else None)) for r in rows]
+        return [
+            CalendarItem(
+                item_id=str(r["id"]),
+                day=str(r["day"]),
+                title=str(r["title"]),
+                time=(str(r["time"]) if r["time"] else None),
+                duration_minutes=(int(r["duration_minutes"]) if r["duration_minutes"] is not None else None),
+            )
+            for r in rows
+        ]
 
-    def add_item(self, *, user: str, day: date, title: str, time: str | None) -> CalendarItem:
+    def list_range(self, *, user: str, start: date, end: date) -> list[CalendarItem]:
+        start_key = start.isoformat()
+        end_key = end.isoformat()
+        if end_key < start_key:
+            start_key, end_key = end_key, start_key
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, day, title, time, duration_minutes
+                FROM calendar_items
+                WHERE user = ? AND day BETWEEN ? AND ?
+                ORDER BY day, {self._order_by_sql()}
+                """,
+                (str(user), start_key, end_key),
+            ).fetchall()
+        return [
+            CalendarItem(
+                item_id=str(r["id"]),
+                day=str(r["day"]),
+                title=str(r["title"]),
+                time=(str(r["time"]) if r["time"] else None),
+                duration_minutes=(int(r["duration_minutes"]) if r["duration_minutes"] is not None else None),
+            )
+            for r in rows
+        ]
+
+    def add_item(self, *, user: str, day: date, title: str, time: str | None, duration_minutes: int | None = None) -> CalendarItem:
         key = day.isoformat()
         title = str(title or "").strip()
         if not title:
             raise ValueError("title is required")
+        if duration_minutes is not None:
+            duration_minutes = max(1, min(24 * 60, int(duration_minutes)))
         item = CalendarItem(
             item_id=str(uuid4()),
             day=key,
             title=title,
             time=(time.strip() if isinstance(time, str) and time.strip() else None),
+            duration_minutes=duration_minutes,
         )
         created_at = datetime.now().astimezone().isoformat()
         with self._connect() as conn:
             with conn:
                 conn.execute(
-                    "INSERT INTO calendar_items (id, user, day, time, title, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (item.item_id, str(user), key, item.time, item.title, created_at),
+                    "INSERT INTO calendar_items (id, user, day, time, duration_minutes, title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (item.item_id, str(user), key, item.time, item.duration_minutes, item.title, created_at),
                 )
         return item
 
@@ -115,13 +183,19 @@ class CalendarStore:
         with self._connect() as conn:
             with conn:
                 row = conn.execute(
-                    f"SELECT id, day, title, time FROM calendar_items WHERE user = ? AND day = ? ORDER BY {self._order_by_sql()} LIMIT 1 OFFSET ?",
+                    f"SELECT id, day, title, time, duration_minutes FROM calendar_items WHERE user = ? AND day = ? ORDER BY {self._order_by_sql()} LIMIT 1 OFFSET ?",
                     (str(user), key, offset),
                 ).fetchone()
                 if row is None:
                     return None
                 conn.execute("DELETE FROM calendar_items WHERE id = ?", (str(row["id"]),))
-        return CalendarItem(item_id=str(row["id"]), day=str(row["day"]), title=str(row["title"]), time=(str(row["time"]) if row["time"] else None))
+        return CalendarItem(
+            item_id=str(row["id"]),
+            day=str(row["day"]),
+            title=str(row["title"]),
+            time=(str(row["time"]) if row["time"] else None),
+            duration_minutes=(int(row["duration_minutes"]) if row["duration_minutes"] is not None else None),
+        )
 
     def clear_day(self, *, user: str, day: date) -> int:
         key = day.isoformat()
@@ -138,6 +212,7 @@ class CalendarStore:
         index_1based: int,
         title: str | None = None,
         time: str | None = None,
+        duration_minutes: int | None = None,
     ) -> CalendarItem | None:
         if index_1based < 1:
             return None
@@ -146,7 +221,7 @@ class CalendarStore:
         with self._connect() as conn:
             with conn:
                 row = conn.execute(
-                    f"SELECT id, day, title, time FROM calendar_items WHERE user = ? AND day = ? ORDER BY {self._order_by_sql()} LIMIT 1 OFFSET ?",
+                    f"SELECT id, day, title, time, duration_minutes FROM calendar_items WHERE user = ? AND day = ? ORDER BY {self._order_by_sql()} LIMIT 1 OFFSET ?",
                     (str(user), key, offset),
                 ).fetchone()
                 if row is None:
@@ -156,12 +231,16 @@ class CalendarStore:
                 if not new_title:
                     return None
                 new_time = (str(row["time"]) if row["time"] else None) if time is None else (time.strip() if isinstance(time, str) and time.strip() else None)
+                if duration_minutes is None:
+                    new_duration = (int(row["duration_minutes"]) if row["duration_minutes"] is not None else None)
+                else:
+                    new_duration = max(1, min(24 * 60, int(duration_minutes)))
 
                 conn.execute(
-                    "UPDATE calendar_items SET title = ?, time = ? WHERE id = ?",
-                    (new_title, new_time, str(row["id"])),
+                    "UPDATE calendar_items SET title = ?, time = ?, duration_minutes = ? WHERE id = ?",
+                    (new_title, new_time, new_duration, str(row["id"])),
                 )
-        return CalendarItem(item_id=str(row["id"]), day=str(row["day"]), title=new_title, time=new_time)
+        return CalendarItem(item_id=str(row["id"]), day=str(row["day"]), title=new_title, time=new_time, duration_minutes=new_duration)
 
     def search(self, *, user: str, query: str) -> list[dict[str, Any]]:
         q = str(query or "").strip().lower()
@@ -176,6 +255,7 @@ class CalendarStore:
                   day,
                   id,
                   time,
+                  duration_minutes,
                   title,
                   ROW_NUMBER() OVER (PARTITION BY day ORDER BY {self._order_by_sql()}) AS idx
                 FROM calendar_items
@@ -189,7 +269,13 @@ class CalendarStore:
             {
                 "day": str(r["day"]),
                 "index": int(r["idx"]),
-                "item": {"id": str(r["id"]), "day": str(r["day"]), "time": (str(r["time"]) if r["time"] else None), "title": str(r["title"])},
+                "item": {
+                    "id": str(r["id"]),
+                    "day": str(r["day"]),
+                    "time": (str(r["time"]) if r["time"] else None),
+                    "duration_minutes": (int(r["duration_minutes"]) if r["duration_minutes"] is not None else None),
+                    "title": str(r["title"]),
+                },
             }
             for r in rows
         ]

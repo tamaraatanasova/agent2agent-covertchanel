@@ -277,7 +277,16 @@ class HostAgentService:
             day = str(it.get("day") or "")
             title = str(it.get("title") or "")
             time_s = it.get("time")
-            out.append(CalendarItem(item_id=item_id, day=day, title=title, time=(str(time_s) if time_s else None)))
+            duration = it.get("duration_minutes")
+            out.append(
+                CalendarItem(
+                    item_id=item_id,
+                    day=day,
+                    title=title,
+                    time=(str(time_s) if time_s else None),
+                    duration_minutes=(int(duration) if duration is not None else None),
+                )
+            )
         return out
 
     def _call_calendar(self, *, case_id: str, to_agent: str, task_name: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -316,12 +325,21 @@ class HostAgentService:
         hits = out.get("hits")
         return hits if isinstance(hits, list) else []
 
-    def _calendar_add(self, *, case_id: str, user: str, day: date, title: str, time: str | None) -> list[CalendarItem]:
+    def _calendar_add(
+        self,
+        *,
+        case_id: str,
+        user: str,
+        day: date,
+        title: str,
+        time: str | None,
+        duration_minutes: int | None = None,
+    ) -> list[CalendarItem]:
         out = self._call_calendar(
             case_id=case_id,
             to_agent="calendar_edit",
             task_name="add_item",
-            params={"user": user, "day": day.isoformat(), "title": title, "time": time},
+            params={"user": user, "day": day.isoformat(), "title": title, "time": time, "duration_minutes": duration_minutes},
         )
         return self._calendar_items_from_payload(out.get("items"))
 
@@ -334,12 +352,20 @@ class HostAgentService:
         index: int,
         title: str | None,
         time: str | None,
+        duration_minutes: int | None = None,
     ) -> tuple[CalendarItem | None, list[CalendarItem]]:
         out = self._call_calendar(
             case_id=case_id,
             to_agent="calendar_edit",
             task_name="update_item",
-            params={"user": user, "day": day.isoformat(), "index": int(index), "title": title, "time": time},
+            params={
+                "user": user,
+                "day": day.isoformat(),
+                "index": int(index),
+                "title": title,
+                "time": time,
+                "duration_minutes": duration_minutes,
+            },
         )
         updated = out.get("updated") if isinstance(out.get("updated"), dict) else None
         updated_item = self._calendar_items_from_payload([updated])[0] if isinstance(updated, dict) else None
@@ -469,13 +495,13 @@ class HostAgentService:
                 return reply, self._assistant_state(user=user, day=day, items=items)
 
             # Treat the next user message as the activity details.
-            time_str, title = self._assistant_extract_time_and_title(text)
+            time_str, title, duration = self._assistant_extract_time_and_title(text)
             if not title:
                 reply = "What should I add? Example: “Gym at 6pm” or “Add 14:00 Dentist”."
                 items = self._calendar_list_day(case_id=case_id, user=user, day=day)
                 return reply, self._assistant_state(user=user, day=day, items=items)
 
-            items = self._calendar_add(case_id=case_id, user=user, day=day, title=title, time=time_str)
+            items = self._calendar_add(case_id=case_id, user=user, day=day, title=title, time=time_str, duration_minutes=duration)
             sess.assistant_pending = None
             reply = f"Added.\n\n{self._assistant_format_day(user=user, day=day, today=today, items=items)}"
             return reply, self._assistant_state(user=user, day=day, items=items)
@@ -513,12 +539,15 @@ class HostAgentService:
                 item = h.get("item") if isinstance(h.get("item"), dict) else {}
                 title = item.get("title")
                 time_s = item.get("time")
+                duration_m = item.get("duration_minutes")
                 try:
                     d = date.fromisoformat(str(day_str))
                     day_label = d.strftime("%Y-%m-%d")
                 except Exception:
                     day_label = str(day_str)
                 when = f"{time_s} — " if time_s else ""
+                if time_s and duration_m:
+                    when = f"{time_s} ({duration_m}m) — "
                 lines.append(f"- {day_label} #{idx}: {when}{title}")
             reply = "\n".join(lines)
             return reply, self._assistant_state(user=user, day=day, items=items)
@@ -531,7 +560,7 @@ class HostAgentService:
             idx = int(m.group(1))
             rest = (text or "")[m.end() :].strip()
             rest = re.sub(r"^(?:to|with)\b[:\s-]*", "", rest, flags=re.IGNORECASE).strip()
-            time_str, title = self._assistant_extract_time_and_title(rest)
+            time_str, title, duration = self._assistant_extract_time_and_title(rest)
             title = title.strip()
             if not title and time_str is None:
                 reply = "What should I change it to? Example: “Edit 2 to Lunch at 12:30”."
@@ -544,6 +573,7 @@ class HostAgentService:
                 index=idx,
                 title=(title if title else None),
                 time=time_str,
+                duration_minutes=duration,
             )
             if updated is None:
                 reply = f"I couldn’t find item #{idx}.\n\n{self._assistant_format_day(user=user, day=day, today=today, items=items)}"
@@ -575,12 +605,12 @@ class HostAgentService:
             return reply, self._assistant_state(user=user, day=day, items=items)
 
         if re.match(r"^(add|schedule|plan)\b", lowered):
-            time_str, title = self._assistant_extract_time_and_title(text)
+            time_str, title, duration = self._assistant_extract_time_and_title(text)
             if not title:
                 sess.assistant_pending = {"type": "await_add", "day": day.isoformat()}
                 reply = f"Sure — what should I add for {day.strftime('%A, %B %d, %Y')}?"
                 return reply, self._assistant_state(user=user, day=day, items=items)
-            items = self._calendar_add(case_id=case_id, user=user, day=day, title=title, time=time_str)
+            items = self._calendar_add(case_id=case_id, user=user, day=day, title=title, time=time_str, duration_minutes=duration)
             reply = f"Added.\n\n{self._assistant_format_day(user=user, day=day, today=today, items=items)}"
             return reply, self._assistant_state(user=user, day=day, items=items)
 
@@ -610,11 +640,15 @@ class HostAgentService:
         t = (text or "").strip().lower()
         return t in {"n", "no", "nope", "nah", "cancel", "stop"}
 
-    def _assistant_extract_time_and_title(self, text: str) -> tuple[str | None, str]:
+    def _assistant_extract_time_and_title(self, text: str) -> tuple[str | None, str, int | None]:
         s = (text or "").strip()
         s = re.sub(r"^(?:please\s+)?(?:add|schedule|plan|edit|update|change)\b[:\s-]*", "", s, flags=re.IGNORECASE).strip()
         s = re.sub(r"\b(to\s+my\s+calendar|to\s+calendar)\b", "", s, flags=re.IGNORECASE).strip()
         s = re.sub(r"\b(today|tomorrow)\b", "", s, flags=re.IGNORECASE).strip()
+
+        duration_minutes = self._assistant_extract_duration_minutes(s)
+        if duration_minutes is not None:
+            s = self._assistant_strip_duration_words(s)
 
         # Time range: 9-5, 9 to 5, 9am-5pm, 09:00–17:00
         m = re.search(
@@ -655,9 +689,9 @@ class HostAgentService:
             end_str = f"{eh24:02d}:{em:02d}"
             title = (s[: m.start()] + s[m.end() :]).strip(" -–—")
             title = re.sub(r"\bat\b", "", title, flags=re.IGNORECASE).strip(" -–—")
-            if title:
-                title = f"{title} (until {end_str})"
-            return time_str, title
+            if duration_minutes is None:
+                duration_minutes = self._assistant_duration_from_range(time_str, end_str)
+            return time_str, title, duration_minutes
 
         # 3pm, 3:30pm
         m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", s, flags=re.IGNORECASE)
@@ -672,7 +706,7 @@ class HostAgentService:
             time_str = f"{hour:02d}:{minute:02d}"
             title = (s[: m.start()] + s[m.end() :]).strip(" -–—")
             title = re.sub(r"\bat\b", "", title, flags=re.IGNORECASE).strip(" -–—")
-            return time_str, title
+            return time_str, title, duration_minutes
 
         # 24h time: 14:00
         m = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", s)
@@ -680,23 +714,85 @@ class HostAgentService:
             time_str = f"{int(m.group(1)):02d}:{int(m.group(2)):02d}"
             title = (s[: m.start()] + s[m.end() :]).strip(" -–—")
             title = re.sub(r"\bat\b", "", title, flags=re.IGNORECASE).strip(" -–—")
-            return time_str, title
+            return time_str, title, duration_minutes
 
-        return None, s
+        # "at 9" / "in 9"
+        m = re.search(r"\b(?:at|in)\s+(\d{1,2})(?::(\d{2}))?\b(?!\s*(?:day|days|week|weeks|month|months))", s, flags=re.IGNORECASE)
+        if m:
+            hour = int(m.group(1))
+            minute = int(m.group(2) or "0")
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                time_str = f"{hour:02d}:{minute:02d}"
+                title = (s[: m.start()] + s[m.end() :]).strip(" -–—")
+                title = re.sub(r"\bat\b", "", title, flags=re.IGNORECASE).strip(" -–—")
+                return time_str, title, duration_minutes
+
+        return None, s, duration_minutes
+
+    @staticmethod
+    def _assistant_extract_duration_minutes(text: str) -> int | None:
+        t = (text or "").lower()
+        m = re.search(r"\b(\d{1,2})\s*h(?:ours?|rs?)?\s*(\d{1,2})\s*m(?:in(?:utes?|uters?)?)?\b", t)
+        if m:
+            return max(1, min(24 * 60, int(m.group(1)) * 60 + int(m.group(2))))
+        m = re.search(r"\b(\d+(?:\.\d+)?)\s*h(?:ours?|rs?)?\b", t)
+        if m:
+            try:
+                return max(1, min(24 * 60, int(float(m.group(1)) * 60)))
+            except Exception:
+                pass
+        m = re.search(r"\b(\d{1,3})\s*(?:m|min|mins|minute|minutes|minuter|minuters)\b", t)
+        if m:
+            return max(1, min(24 * 60, int(m.group(1))))
+        return None
+
+    @staticmethod
+    def _assistant_strip_duration_words(text: str) -> str:
+        s = str(text or "")
+        s = re.sub(
+            r"\b(?:for|lasting|takes?|take|will\s+take|duration)\s+\d{1,3}\s*(?:m|min|mins|minute|minutes|minuter|minuters|h|hr|hrs|hour|hours)\b",
+            "",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(r"\b\d{1,2}\s*h(?:ours?|rs?)?\s*\d{1,2}\s*m(?:in(?:utes?|uters?)?)?\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\b\d+(?:\.\d+)?\s*h(?:ours?|rs?)?\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\b\d{1,3}\s*(?:m|min|mins|minute|minutes|minuter|minuters)\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s{2,}", " ", s).strip(" -–—")
+        return s
 
     def _assistant_maybe_apply_recurring_schedule(self, *, case_id: str, user: str, text: str, today: date, default_day: date) -> str | None:
         t = (text or "").strip()
         lowered = t.lower()
 
         # Detect a recurring schedule intent (keep it simple, demo-friendly).
-        recurrence_cues = ("every", "each", "daily", "weekdays", "weekends", "mon-fri", "monday to friday", "monday through friday", "monday thru friday")
+        recurrence_cues = (
+            "every",
+            "each",
+            "daily",
+            "weekly",
+            "weekdays",
+            "weekends",
+            "mon-fri",
+            "monday to friday",
+            "monday through friday",
+            "monday thru friday",
+        )
         if not any(cue in lowered for cue in recurrence_cues) and not re.search(r"\b(mon|tue|wed|thu|fri|sat|sun)\b", lowered):
             return None
 
-        # Require a time RANGE (e.g., "9 to 5") to treat it as a repeating block.
+        # Prefer a time RANGE (e.g., "9 to 5") to treat it as a repeating block.
         start_time, end_time = self._assistant_extract_time_range(t)
+        title = ""
+        duration_minutes: int | None = None
         if not start_time or not end_time:
-            return None
+            start_time, title, duration_minutes = self._assistant_extract_time_and_title(t)
+            end_time = None
+            if not start_time:
+                return None
+            title = self._assistant_strip_recurrence_words(title)
+        else:
+            duration_minutes = self._assistant_duration_from_range(start_time, end_time)
 
         days = self._assistant_extract_days_of_week(t)
         if days is None:
@@ -708,10 +804,16 @@ class HostAgentService:
         weeks = self._assistant_extract_duration_weeks(t)
         loc = self._assistant_extract_location(t)
 
-        base = "Work" if re.search(r"\bwork(?:ing)?\b", lowered) else "Block"
-        title = f"{base} in {loc}" if loc else base
         if end_time:
+            base = "Work" if re.search(r"\bwork(?:ing)?\b", lowered) else "Block"
+            title = f"{base} in {loc}" if loc else base
             title = f"{title} (until {end_time})"
+        else:
+            if not title:
+                base = "Work" if re.search(r"\bwork(?:ing)?\b", lowered) else "Activity"
+                title = f"{base} in {loc}" if loc else base
+            elif loc and loc.lower() not in title.lower():
+                title = f"{title} in {loc}"
 
         # Default start day is whatever the assistant is currently looking at (today/tomorrow/etc).
         start_day = default_day
@@ -738,13 +840,13 @@ class HostAgentService:
             if d.weekday() not in days:
                 continue
             existing = self._calendar_list_day(case_id=case_id, user=user, day=d)
-            if any(it.time == start_time and it.title == title for it in existing):
+            if any(it.time == start_time and it.title == title and it.duration_minutes == duration_minutes for it in existing):
                 skipped += 1
                 continue
-            self._calendar_add(case_id=case_id, user=user, day=d, title=title, time=start_time)
+            self._calendar_add(case_id=case_id, user=user, day=d, title=title, time=start_time, duration_minutes=duration_minutes)
             added += 1
 
-        day_label = f"{start_time}–{end_time}"
+        day_label = f"{start_time}–{end_time}" if end_time else start_time
         days_label = self._assistant_days_label(days)
         weeks_label = "1 week" if weeks == 1 else f"{weeks} weeks"
         extra = f" in {loc}" if loc else ""
@@ -792,6 +894,19 @@ class HostAgentService:
 
         return f"{sh24:02d}:{sm:02d}", f"{eh24:02d}:{em:02d}"
 
+    @staticmethod
+    def _assistant_duration_from_range(start_time: str, end_time: str) -> int | None:
+        try:
+            sh, sm = start_time.split(":", 1)
+            eh, em = end_time.split(":", 1)
+            start = int(sh) * 60 + int(sm)
+            end = int(eh) * 60 + int(em)
+            if end <= start:
+                end += 24 * 60
+            return max(1, min(24 * 60, end - start))
+        except Exception:
+            return None
+
     def _assistant_extract_days_of_week(self, text: str) -> set[int] | None:
         t = (text or "").strip().lower()
         if "weekdays" in t:
@@ -837,7 +952,10 @@ class HostAgentService:
             return set(range(start, 7)) | set(range(0, end + 1))
 
         days: set[int] = set()
-        for w in re.findall(r"\b(mon|tue(?:s)?|wed(?:s)?|thu(?:r|rs)?|fri|sat|sun)\b", t):
+        for w in re.findall(
+            r"\b(mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:s|nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?)\b",
+            t,
+        ):
             key = w[:3]
             if key in aliases:
                 days.add(aliases[key])
@@ -912,6 +1030,22 @@ class HostAgentService:
         if not out:
             return None
         return " ".join(out)
+
+    @staticmethod
+    def _assistant_strip_recurrence_words(text: str) -> str:
+        if not text:
+            return ""
+        s = str(text)
+        s = re.sub(r"\b(every|each|daily|weekly|weekdays?|weekends?|day|days|on)\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(
+            r"\b(mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:s|nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?)\b",
+            "",
+            s,
+            flags=re.IGNORECASE,
+        )
+        s = re.sub(r"\b(from|to|at)\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s{2,}", " ", s).strip(" -–—,")
+        return s
 
     @staticmethod
     def _assistant_days_label(days: set[int]) -> str:

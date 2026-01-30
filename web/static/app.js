@@ -12,8 +12,19 @@ const SAMPLES = {
   assistant_today: "I'm Tamara — show my calendar for today.",
   assistant_add: "I'm Tamara — add 10am Gym today.",
   assistant_work: "I'm Tamara — I'm working every day from 9 to 5 in Imbrium from Monday to Friday.",
+  assistant_everyday: "I'm Tamara — every day at 9:00 go to work.",
   assistant_search: "I'm Tamara — add 14:00 Dentist tomorrow, then search for Dentist.",
 };
+
+const calendarState = {
+  viewDate: new Date(),
+  selectedDate: new Date(),
+  itemsByDay: {},
+  loading: false,
+};
+
+let calendarRefreshTimer = null;
+const CALENDAR_VIEW_SUFFIXES = ["", "Modal"];
 
 async function fetchJson(url, options = {}) {
   const opts = options || {};
@@ -81,6 +92,405 @@ function errorText(err) {
   return String(err);
 }
 
+function toDateKey(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function fromDateKey(key) {
+  if (!key || typeof key !== "string") return null;
+  const parts = key.split("-").map((x) => parseInt(x, 10));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function formatMonthLabel(dateObj) {
+  try {
+    return dateObj.toLocaleString(undefined, { month: "long", year: "numeric" });
+  } catch {
+    return dateObj.toDateString();
+  }
+}
+
+function parseTimeToMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return null;
+  const parts = timeStr.split(":");
+  if (parts.length !== 2) return null;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+function minutesToTime(minutes) {
+  const safe = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function formatDuration(minutes) {
+  if (!minutes || !Number.isFinite(minutes)) return "";
+  const total = Math.max(1, Math.min(24 * 60, Math.round(minutes)));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
+function formatTimeRange(timeStr, durationMinutes) {
+  if (!timeStr) return "";
+  if (!durationMinutes) return timeStr;
+  const start = parseTimeToMinutes(timeStr);
+  if (start == null) return timeStr;
+  const end = start + durationMinutes;
+  return `${timeStr}–${minutesToTime(end)}`;
+}
+
+function describeEventTime(item) {
+  const timeStr = item && item.time ? String(item.time) : "";
+  const duration = item && item.duration_minutes ? Number(item.duration_minutes) : null;
+  const range = formatTimeRange(timeStr, duration);
+  const durLabel = formatDuration(duration);
+  return { timeStr, duration, range, durLabel };
+}
+
+function getMonthRange(dateObj) {
+  const start = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
+  const end = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0);
+  return { start, end };
+}
+
+function sortCalendarItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.sort((a, b) => {
+    const ta = (a && a.time) || "99:99";
+    const tb = (b && b.time) || "99:99";
+    if (ta === tb) {
+      const da = a && a.duration_minutes ? Number(a.duration_minutes) : 0;
+      const db = b && b.duration_minutes ? Number(b.duration_minutes) : 0;
+      if (da !== db) return da - db;
+      return String((a && a.title) || "").localeCompare(String((b && b.title) || ""));
+    }
+    return ta.localeCompare(tb);
+  });
+}
+
+function groupCalendarItems(items) {
+  const grouped = {};
+  if (!Array.isArray(items)) return grouped;
+  items.forEach((item) => {
+    if (!item || !item.day) return;
+    const key = String(item.day);
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(item);
+  });
+  Object.keys(grouped).forEach((key) => {
+    grouped[key] = sortCalendarItems(grouped[key]);
+  });
+  return grouped;
+}
+
+function getCalendarViewElements(suffix) {
+  const s = suffix || "";
+  return {
+    status: el(`calendarStatus${s}`),
+    label: el(`calendarLabel${s}`),
+    grid: el(`calendarGrid${s}`),
+    detailLabel: el(`calendarDetailLabel${s}`),
+    detailMeta: el(`calendarDetailMeta${s}`),
+    detailList: el(`calendarDetailList${s}`),
+  };
+}
+
+function setCalendarStatus(text, isError = false) {
+  CALENDAR_VIEW_SUFFIXES.forEach((suffix) => {
+    const status = el(`calendarStatus${suffix}`);
+    if (!status) return;
+    status.textContent = text || "";
+    status.classList.toggle("muted", !isError);
+  });
+}
+
+function renderCalendarView(view) {
+  if (!view || !view.grid || !view.label) return;
+
+  const viewDate = calendarState.viewDate || new Date();
+  view.label.textContent = formatMonthLabel(viewDate);
+
+  view.grid.innerHTML = "";
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const first = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startOffset = (first.getDay() + 6) % 7; // Monday start
+
+  const todayKey = toDateKey(new Date());
+  const selectedKey = calendarState.selectedDate ? toDateKey(calendarState.selectedDate) : null;
+
+  for (let i = 0; i < startOffset; i += 1) {
+    const empty = document.createElement("div");
+    empty.className = "calendar-cell empty";
+    empty.setAttribute("aria-hidden", "true");
+    view.grid.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateObj = new Date(year, month, day);
+    const key = toDateKey(dateObj);
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "calendar-cell";
+    cell.dataset.date = key;
+
+    if (key === todayKey) cell.classList.add("today");
+    if (selectedKey && key === selectedKey) cell.classList.add("selected");
+
+    const number = document.createElement("div");
+    number.className = "day-number";
+    number.textContent = String(day);
+    cell.appendChild(number);
+
+    const items = calendarState.itemsByDay[key] || [];
+    if (items.length) {
+      const list = document.createElement("div");
+      list.className = "calendar-events";
+      items.slice(0, 2).forEach((it) => {
+        const row = document.createElement("div");
+        row.className = "calendar-event";
+        const desc = describeEventTime(it);
+        const timeLabel = desc.range ? `${desc.range} ` : (desc.timeStr ? `${desc.timeStr} ` : "");
+        row.textContent = `${timeLabel}${it.title || "Untitled"}`;
+        list.appendChild(row);
+      });
+      if (items.length > 2) {
+        const more = document.createElement("div");
+        more.className = "calendar-event more";
+        more.textContent = `+${items.length - 2} more`;
+        list.appendChild(more);
+      }
+      cell.appendChild(list);
+    }
+
+    cell.addEventListener("click", () => selectCalendarDay(key));
+    view.grid.appendChild(cell);
+  }
+}
+
+function renderCalendar() {
+  CALENDAR_VIEW_SUFFIXES.forEach((suffix) => {
+    renderCalendarView(getCalendarViewElements(suffix));
+  });
+}
+
+function renderCalendarDetailView(view, dateKey) {
+  if (!view || !view.detailLabel || !view.detailMeta || !view.detailList) return;
+
+  const key = dateKey || (calendarState.selectedDate ? toDateKey(calendarState.selectedDate) : null);
+  if (!key) {
+    view.detailLabel.textContent = "Select a day";
+    view.detailMeta.textContent = "—";
+    view.detailList.classList.add("muted");
+    view.detailList.textContent = "No events yet.";
+    return;
+  }
+
+  const dateObj = fromDateKey(key);
+  if (!dateObj) return;
+  view.detailLabel.textContent = dateObj.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  const items = calendarState.itemsByDay[key] || [];
+  view.detailMeta.textContent = items.length ? `${items.length} item${items.length === 1 ? "" : "s"}` : "No events";
+  view.detailList.innerHTML = "";
+
+  if (!items.length) {
+    view.detailList.classList.add("muted");
+    view.detailList.textContent = "No events for this day.";
+    return;
+  }
+
+  view.detailList.classList.remove("muted");
+  items.forEach((it) => {
+    const desc = describeEventTime(it);
+    const row = document.createElement("div");
+    row.className = "calendar-detail-item";
+
+    const time = document.createElement("div");
+    time.className = "calendar-detail-time";
+    time.textContent = desc.range || desc.timeStr || "—";
+
+    const title = document.createElement("div");
+    title.className = "calendar-detail-title-text";
+    title.textContent = it.title || "Untitled";
+
+    const duration = document.createElement("div");
+    duration.className = "calendar-detail-duration";
+    duration.textContent = desc.durLabel || "";
+
+    const timeline = document.createElement("div");
+    timeline.className = "calendar-detail-timeline";
+    const block = document.createElement("div");
+    block.className = "calendar-detail-block";
+    const startMinutes = desc.timeStr ? parseTimeToMinutes(desc.timeStr) : null;
+    const durMinutes = desc.duration || 0;
+    if (startMinutes != null) {
+      const left = (startMinutes / (24 * 60)) * 100;
+      const width = durMinutes ? Math.max(2, (durMinutes / (24 * 60)) * 100) : 2;
+      block.style.left = `${left}%`;
+      block.style.width = `${Math.min(100 - left, width)}%`;
+    } else {
+      block.style.left = "0%";
+      block.style.width = "6%";
+      block.classList.add("no-time");
+    }
+    timeline.appendChild(block);
+
+    row.appendChild(time);
+    row.appendChild(title);
+    if (desc.durLabel) row.appendChild(duration);
+    row.appendChild(timeline);
+    view.detailList.appendChild(row);
+  });
+}
+
+function renderCalendarDetail(dateKey) {
+  CALENDAR_VIEW_SUFFIXES.forEach((suffix) => {
+    renderCalendarDetailView(getCalendarViewElements(suffix), dateKey);
+  });
+}
+
+function selectCalendarDay(key) {
+  const dateObj = fromDateKey(key);
+  if (!dateObj) return;
+  calendarState.selectedDate = dateObj;
+  renderCalendar();
+  renderCalendarDetail(key);
+}
+
+function applyAssistantState(state) {
+  if (!state || typeof state !== "object") return;
+  const dayKey = typeof state.day === "string" ? state.day : null;
+  if (dayKey) {
+    const dateObj = fromDateKey(dayKey);
+    if (dateObj) {
+      calendarState.selectedDate = dateObj;
+      if (calendarState.viewDate.getMonth() !== dateObj.getMonth() || calendarState.viewDate.getFullYear() !== dateObj.getFullYear()) {
+        calendarState.viewDate = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
+      }
+    }
+  }
+  if (dayKey && Array.isArray(state.items)) {
+    calendarState.itemsByDay[dayKey] = sortCalendarItems(state.items.slice());
+  }
+  renderCalendar();
+  renderCalendarDetail(dayKey);
+}
+
+async function refreshCalendar() {
+  if (!authToken) {
+    calendarState.itemsByDay = {};
+    setCalendarStatus("Sign in to load calendar.");
+    renderCalendar();
+    renderCalendarDetail(null);
+    return;
+  }
+
+  const { start, end } = getMonthRange(calendarState.viewDate);
+  const startKey = toDateKey(start);
+  const endKey = toDateKey(end);
+  calendarState.loading = true;
+  setCalendarStatus("Loading…");
+  try {
+    const data = await fetchJson(`/calendar/range?start=${encodeURIComponent(startKey)}&end=${encodeURIComponent(endKey)}`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    calendarState.itemsByDay = groupCalendarItems(items);
+    setCalendarStatus(`${items.length} event${items.length === 1 ? "" : "s"}`);
+  } catch (e) {
+    setCalendarStatus(`Calendar error: ${errorText(e)}`, true);
+  } finally {
+    calendarState.loading = false;
+    renderCalendar();
+    renderCalendarDetail();
+  }
+}
+
+function scheduleCalendarRefresh() {
+  if (calendarRefreshTimer) {
+    clearTimeout(calendarRefreshTimer);
+  }
+  calendarRefreshTimer = setTimeout(() => {
+    calendarRefreshTimer = null;
+    void refreshCalendar();
+  }, 250);
+}
+
+function initCalendar() {
+  calendarState.viewDate = new Date();
+  calendarState.selectedDate = new Date();
+  calendarState.itemsByDay = {};
+  renderCalendar();
+  renderCalendarDetail();
+  return refreshCalendar();
+}
+
+function resetCalendar() {
+  calendarState.viewDate = new Date();
+  calendarState.selectedDate = new Date();
+  calendarState.itemsByDay = {};
+  setCalendarStatus("Sign in to load calendar.");
+  renderCalendar();
+  renderCalendarDetail();
+}
+
+function changeCalendarMonth(delta) {
+  const current = calendarState.viewDate || new Date();
+  calendarState.viewDate = new Date(current.getFullYear(), current.getMonth() + delta, 1);
+  renderCalendar();
+  void refreshCalendar();
+}
+
+function wireCalendar() {
+  const prevBtn = el("calendarPrevBtn");
+  const nextBtn = el("calendarNextBtn");
+  const todayBtn = el("calendarTodayBtn");
+  const openBtn = el("calendarOpenBtn");
+  const prevBtnModal = el("calendarPrevBtnModal");
+  const nextBtnModal = el("calendarNextBtnModal");
+  const todayBtnModal = el("calendarTodayBtnModal");
+  const modal = el("calendarModal");
+  const modalClose = el("calendarModalClose");
+  const modalBackdrop = el("calendarModalBackdrop");
+
+  if (prevBtn) prevBtn.addEventListener("click", () => changeCalendarMonth(-1));
+  if (nextBtn) nextBtn.addEventListener("click", () => changeCalendarMonth(1));
+  if (todayBtn) {
+    todayBtn.addEventListener("click", () => {
+      calendarState.viewDate = new Date();
+      calendarState.selectedDate = new Date();
+      renderCalendar();
+      void refreshCalendar();
+    });
+  }
+  if (openBtn && modal) {
+    openBtn.addEventListener("click", () => openCalendarModal());
+  }
+  if (prevBtnModal) prevBtnModal.addEventListener("click", () => changeCalendarMonth(-1));
+  if (nextBtnModal) nextBtnModal.addEventListener("click", () => changeCalendarMonth(1));
+  if (todayBtnModal) {
+    todayBtnModal.addEventListener("click", () => {
+      calendarState.viewDate = new Date();
+      calendarState.selectedDate = new Date();
+      renderCalendar();
+      void refreshCalendar();
+    });
+  }
+  if (modalClose) modalClose.addEventListener("click", () => closeCalendarModal());
+  if (modalBackdrop) modalBackdrop.addEventListener("click", () => closeCalendarModal());
+}
+
 function setScreen(signedIn) {
   const authScreen = el("authScreen");
   const appScreen = el("appScreen");
@@ -140,6 +550,7 @@ async function enterApp() {
   setCaseLink("");
   await loadAgents();
   await createSession();
+  await initCalendar();
 }
 
 async function bindSessionUser() {
@@ -203,6 +614,7 @@ async function logoutAuth() {
     latestCaseId = null;
     setCaseLink("");
     if (el("messages")) el("messages").innerHTML = "";
+    resetCalendar();
     setAuthMessage("Signed out.");
   }
 }
@@ -622,6 +1034,8 @@ async function sendMessageStream(text) {
       if (resp && resp.case_id) void refreshCase(resp.case_id);
 
       addBubble("assistant", reply);
+      if (resp && resp.assistant) applyAssistantState(resp.assistant);
+      scheduleCalendarRefresh();
       // Covert channel auto-demo is intentionally hidden from the chat UI.
       return;
     }
@@ -681,6 +1095,8 @@ async function sendMessage(text) {
     if (data.case_id) void refreshCase(data.case_id);
 
     addBubble("assistant", data.reply || "No reply.");
+    if (data.assistant) applyAssistantState(data.assistant);
+    scheduleCalendarRefresh();
     // Covert channel auto-demo is intentionally hidden from the chat UI.
   } catch (e) {
     addBubble("system", `Error: ${String(e)}`);
@@ -788,6 +1204,23 @@ function closeModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
+function openCalendarModal() {
+  const modal = el("calendarModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  renderCalendar();
+  renderCalendarDetail();
+  void refreshCalendar();
+}
+
+function closeCalendarModal() {
+  const modal = el("calendarModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+}
+
 async function copyCaseId() {
   if (!latestCaseId) return;
   try {
@@ -809,6 +1242,7 @@ function loadSample() {
 }
 
 function wire() {
+  wireCalendar();
   el("sendBtn").addEventListener("click", () => {
     const text = el("input").value.trim();
     if (!text) return;
@@ -863,7 +1297,10 @@ function wire() {
   });
 
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeModal();
+    if (e.key === "Escape") {
+      closeModal();
+      closeCalendarModal();
+    }
   });
 }
 

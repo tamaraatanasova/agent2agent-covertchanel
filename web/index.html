@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Calendar Host Agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=7" />
+  <link rel="stylesheet" href="/static/styles.css?v=10" />
   <!-- Add this to your <head> -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -28,7 +28,8 @@
         <div class="auth-form">
           <input id="authUsername" type="text" placeholder="Username or email" autocomplete="username" />
           <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
-          <input id="authDisplayName" class="hidden" type="text" placeholder="Display name (for calendar)" autocomplete="name" />
+          <input id="authDisplayName" class="hidden" type="text" placeholder="Display name (for calendar)"
+            autocomplete="name" />
           <button id="authSubmitBtn" class="btn primary" type="button">Login</button>
           <div id="authMessage" class="tiny muted"></div>
         </div>
@@ -90,6 +91,39 @@
             </div>
           </div>
         </section>
+
+        <section class="panel calendar-panel">
+          <div class="panel-head calendar-head">
+            <div>
+              <div class="panel-title">Calendar</div>
+              <div id="calendarStatus" class="tiny muted">Loading…</div>
+            </div>
+            <div class="calendar-controls">
+              <button id="calendarTodayBtn" class="btn sm ghost" type="button">Today</button>
+              <button id="calendarOpenBtn" class="btn sm" type="button">Open</button>
+              <button id="calendarPrevBtn" class="btn sm ghost" type="button" aria-label="Previous month">‹</button>
+              <div id="calendarLabel" class="calendar-label mono">—</div>
+              <button id="calendarNextBtn" class="btn sm ghost" type="button" aria-label="Next month">›</button>
+            </div>
+          </div>
+          <div class="calendar-body">
+
+            <div class="calendar-detail">
+              <div class="calendar-detail-head">
+                <div id="calendarDetailLabel" class="calendar-detail-title">Select a day</div>
+                <div id="calendarDetailMeta" class="tiny muted">—</div>
+              </div>
+              <div class="calendar-hour-scale">
+                <span>0</span>
+                <span>6</span>
+                <span>12</span>
+                <span>18</span>
+                <span>24</span>
+              </div>
+              <div id="calendarDetailList" class="calendar-detail-list muted">No events yet.</div>
+            </div>
+          </div>
+        </section>
       </aside>
 
       <section class="panel chat">
@@ -104,7 +138,8 @@
         <div id="messages" class="messages" aria-live="polite"></div>
 
         <div class="composer">
-          <textarea id="input" placeholder="Try: “Show my calendar for today.” Or: “Add 10am Gym tomorrow.” Ctrl+Enter to send."
+          <textarea id="input"
+            placeholder="Try: “Show my calendar for today.” Or: “Add 10am Gym tomorrow.” Ctrl+Enter to send."
             rows="3"></textarea>
           <div class="quickbar">
             <button id="commandsBtn" class="btn">Commands</button>
@@ -114,6 +149,7 @@
                 <option value="assistant_today" selected>Sample: Show today</option>
                 <option value="assistant_add">Sample: Add activity</option>
                 <option value="assistant_work">Sample: Work schedule (Mon–Fri)</option>
+                <option value="assistant_everyday">Sample: Every day at 9</option>
                 <option value="assistant_search">Sample: Search + edit</option>
               </select>
             </label>
@@ -131,38 +167,88 @@
         </div>
       </section>
 
-    <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
+      <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
     </main>
 
     <div id="modal" class="modal hidden" aria-hidden="true">
-    <div class="modal-backdrop" id="modalBackdrop"></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Commands and samples">
-      <div class="modal-head">
-        <div class="modal-title">Commands & Samples</div>
-        <button id="modalClose" class="btn ghost">Close</button>
-      </div>
-      <div class="modal-body">
-        <div class="modal-grid">
-          <div class="card">
-            <div class="card-title">Commands</div>
-            <div id="commandsList" class="list mono">/help
-/reset
-/last</div>
-          </div>
-          <div class="card">
-            <div class="card-title">How to Ask</div>
-            <div class="list muted">
-              Say what day you mean (today/tomorrow/date), the time (optional), and the activity.
+      <div class="modal-backdrop" id="modalBackdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Commands and samples">
+        <div class="modal-head">
+          <div class="modal-title">Commands & Samples</div>
+          <button id="modalClose" class="btn ghost">Close</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-grid">
+            <div class="card">
+              <div class="card-title">Commands</div>
+              <div id="commandsList" class="list mono">/help
+                /reset
+                /last</div>
             </div>
-            <div class="muted tiny">Examples: “Show my calendar for today.” · “Add 14:00 Dentist tomorrow.” · “Delete 2.”</div>
+            <div class="card">
+              <div class="card-title">How to Ask</div>
+              <div class="list muted">
+                Say what day you mean (today/tomorrow/date), the time (optional), and the activity.
+              </div>
+              <div class="muted tiny">Examples: “Show my calendar for today.” · “Add 14:00 Dentist tomorrow.” · “Delete
+                2.”</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="calendarModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" id="calendarModalBackdrop"></div>
+      <div class="modal-card calendar-modal-card" role="dialog" aria-modal="true" aria-label="Calendar">
+        <div class="modal-head calendar-modal-head">
+          <div>
+            <div class="modal-title">Calendar</div>
+            <div id="calendarStatusModal" class="tiny muted">Loading…</div>
+          </div>
+          <div class="calendar-controls">
+            <button id="calendarTodayBtnModal" class="btn sm ghost" type="button">Today</button>
+            <button id="calendarPrevBtnModal" class="btn sm ghost" type="button" aria-label="Previous month">‹</button>
+            <div id="calendarLabelModal" class="calendar-label mono">—</div>
+            <button id="calendarNextBtnModal" class="btn sm ghost" type="button" aria-label="Next month">›</button>
+            <button id="calendarModalClose" class="btn sm ghost" type="button">Close</button>
+          </div>
+        </div>
+        <div class="modal-body calendar-modal-body">
+          <div class="calendar-modal-grid">
+            <div>
+              <div class="calendar-weekdays">
+                <span>Mon</span>
+                <span>Tue</span>
+                <span>Wed</span>
+                <span>Thu</span>
+                <span>Fri</span>
+                <span>Sat</span>
+                <span>Sun</span>
+              </div>
+              <div id="calendarGridModal" class="calendar-grid calendar-grid-modal"></div>
+            </div>
+            <div class="calendar-detail calendar-detail-modal">
+              <div class="calendar-detail-head">
+                <div id="calendarDetailLabelModal" class="calendar-detail-title">Select a day</div>
+                <div id="calendarDetailMetaModal" class="tiny muted">—</div>
+              </div>
+              <div class="calendar-hour-scale">
+                <span>0</span>
+                <span>6</span>
+                <span>12</span>
+                <span>18</span>
+                <span>24</span>
+              </div>
+              <div id="calendarDetailListModal" class="calendar-detail-list muted">No events yet.</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
   </div>
-  </div>
 
-  <script src="/static/app.js?v=7"></script>
-</body>
+  <script src="/static/app.js?v=10"></script>
+  </body>
 
 </html>

@@ -27,7 +27,14 @@ def _handle(task: A2ATask) -> dict:
     if task.name == "add_item":
         title = str(task.parameters.get("title") or "").strip()
         time = task.parameters.get("time")
-        item = calendar_store.add_item(user=user, day=day, title=title, time=(str(time) if time is not None else None))
+        duration = task.parameters.get("duration_minutes")
+        item = calendar_store.add_item(
+            user=user,
+            day=day,
+            title=title,
+            time=(str(time) if time is not None else None),
+            duration_minutes=(int(duration) if duration is not None else None),
+        )
         items = calendar_store.list_day(user=user, day=day)
         return {"user": user, "day": day.isoformat(), "added": item.model_dump(), "items": [it.model_dump() for it in items]}
 
@@ -35,12 +42,14 @@ def _handle(task: A2ATask) -> dict:
         index = int(task.parameters.get("index") or 0)
         title = task.parameters.get("title")
         time = task.parameters.get("time")
+        duration = task.parameters.get("duration_minutes")
         updated = calendar_store.update_index(
             user=user,
             day=day,
             index_1based=index,
             title=(str(title) if title is not None else None),
             time=(str(time) if time is not None else None),
+            duration_minutes=(int(duration) if duration is not None else None),
         )
         if updated is None:
             raise ValueError("calendar item not found")

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from orchestrator.orchestrator import Orchestrator
 from orchestrator.store import InMemoryStore
 from orchestrator.host_agent import HostAgentService
+from orchestrator.personal_assistant import calendar_store, parse_day
 from orchestrator.auth import AuthSessions, AuthStore, AuthUser
 from orchestrator.agent_server import router as agents_router
 from orchestrator.mitigation import MitigationConfig
@@ -202,6 +203,25 @@ def auth_logout(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="not authenticated")
     auth_sessions.revoke(token)
     return {"ok": True}
+
+@router.get("/calendar/range")
+def calendar_range(request: Request, start: str, end: str) -> dict:
+    auth_user = _get_auth_user(request)
+    if auth_user is None:
+        raise HTTPException(status_code=401, detail="not authenticated")
+
+    start_day = parse_day(start)
+    end_day = parse_day(end)
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+
+    items = calendar_store.list_range(user=auth_user.display_name, start=start_day, end=end_day)
+    return {
+        "user": auth_user.display_name,
+        "start": start_day.isoformat(),
+        "end": end_day.isoformat(),
+        "items": [it.model_dump() for it in items],
+    }
 
 @router.get("/.well-known/agent.json")
 def well_known_agent_card(request: Request) -> dict:
