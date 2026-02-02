@@ -35,6 +35,8 @@ class A2ATraceHop(BaseModel):
     agent: str
     ts: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     latency_ms: float | None = None
+    # Optional covert hint in trace (research/demo: encode bit in trace path).
+    covert_hint: str | None = Field(default=None, max_length=64)
 
 
 class A2ATrace(BaseModel):
@@ -43,8 +45,8 @@ class A2ATrace(BaseModel):
     hop_count: int = 0
     hops: list[A2ATraceHop] = Field(default_factory=list)
 
-    def add_hop(self, agent: str, *, latency_ms: float | None = None) -> None:
-        self.hops.append(A2ATraceHop(agent=agent, latency_ms=latency_ms))
+    def add_hop(self, agent: str, *, latency_ms: float | None = None, covert_hint: str | None = None) -> None:
+        self.hops.append(A2ATraceHop(agent=agent, latency_ms=latency_ms, covert_hint=covert_hint))
         self.hop_count = len(self.hops)
 
 
@@ -104,6 +106,8 @@ class A2AEnvelope(BaseModel):
 
     trace: A2ATrace = Field(default_factory=A2ATrace)
     security: A2ASecurity | None = None
+    # Optional covert channel payload in envelope (research/demo; max 256 chars, included in signature).
+    covert_payload: str | None = Field(default=None, max_length=256)
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> "A2AEnvelope":

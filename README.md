@@ -2,6 +2,8 @@
 
 Minimal, research-style starter for an “Autonomous AI‑SOC” with a safe timing covert‑channel demo + detection/mitigation.
 
+**→ [Architecture diagram (how it works)](docs/ARCHITECTURE.md)**
+
 ## Quickstart
 
 ```bat
@@ -27,23 +29,28 @@ curl -X POST http://127.0.0.1:8000/cases -H "content-type: application/json" -d 
 - `GET /cases/{case_id}` shows stored messages + timing alerts.
 - `GET /cases` lists known case IDs. `GET /health` is a simple liveness check.
 - `POST /demo/covert` runs a safe timing-channel simulation (short/long delays) and shows whether the detector triggers and what mitigation was applied.
-- Covert lab options: `/demo/covert` supports `compare=true` (baseline vs defended), and mitigation knobs (`min_response_ms`, `jitter_ms_low`, `jitter_ms_high`).
+- Covert lab options: `/demo/covert` supports `channel=timing|storage|size|protocol`, `compare=true` (baseline vs defended), and mitigation knobs (`min_response_ms`, `jitter_ms_low`, `jitter_ms_high`).
+- **Covert channel in A2A protocol**: Envelopes support optional `covert_payload` (max 256 chars, signed). **Active by default**: every agent-to-agent TASK carries a trace marker (`case_id|from->to|task`); set `A2A_COVERT_ACTIVE=0` to disable. Use `channel=protocol` in `/demo/covert` to send bits via the envelope; detectors get `COVERT_PROTOCOL` alerts. Trace hops support optional `covert_hint` for research.
 - UI: `GET /` (chat-style Host Agent) calls `/host/sessions/...` endpoints.
 - Agents: `GET /agents` lists agent “cards”, and each agent exposes `POST /agents/{name}/a2a` for A2A TASK→RESULT exchange.
 - A2A activation: `POST /agents/{name}/a2a` also supports `HEARTBEAT` envelopes to verify agent connectivity.
 - A2A SDK compatibility (google/a2a-python style):
   - Agent Card: `GET /.well-known/agent.json`
-  - Host JSON-RPC: `POST /a2a/rpc` (`message/send`, `tasks/get`)
-  - Standalone agent JSON-RPC: `POST /` (`message/send`, `tasks/get`) + `GET /.well-known/agent.json`
+  - Host JSON-RPC: `POST /a2a/rpc` (`message/send`, `message/sendSubscribe`, `tasks/get`, `tasks/pushNotificationSet`)
+  - Standalone agent JSON-RPC: `POST /` (`message/send`, `message/sendSubscribe`, `tasks/get`, `tasks/pushNotificationSet`) + `GET /.well-known/agent.json`
+  - Streaming: `message/sendSubscribe` uses Server-Sent Events (SSE); send `Accept: text/event-stream`.
 
 ## Host Agent tips (UI)
 
 - You can paste plain text (not just JSON). If key details are missing, the Host Agent asks 2–3 triage questions (host/timeframe/indicators).
 - Built-in commands:
   - `/help` or `/commands`
-  - `/last`, `/case <id>`
+  - `/assistant` — switch to calendar assistant with tips
+  - `/last`, `/case [id|last]`
   - `/iocs [id|last]`, `/mitre [id|last]`, `/timeline [id|last]`
   - `/export [id|last]`, `/reset`
+- Natural-language assistant: “What’s next?”, “Show my week”, “How busy am I today?”, “Remind me to call Mom at 5pm”.
+- Personal assistant demo: run `/assistant`, then ask “I’m Tamara, show my calendar for today”.
 
 ## Multi-process (agent-to-agent over HTTP)
 
@@ -59,6 +66,9 @@ uvicorn agents.ir_planner_service:app --port 11004
 uvicorn agents.compliance_service:app --port 11005
 uvicorn agents.report_service:app --port 11006
 uvicorn agents.malicious_service:app --port 11007
+uvicorn agents.calendar_service:app --port 11008
+uvicorn agents.calendar_view_service:app --port 11009
+uvicorn agents.calendar_edit_service:app --port 11010
 ```
 
 2) Start the gateway in remote mode:
@@ -90,6 +100,8 @@ If signatures are enabled and keys are missing, the app will ask you to generate
 
 Replace toy heuristics with an LLM for `threat_intel` and `report`:
 
+Tip: you can either `set ...` env vars in your terminal, or create a local `.env` file in the repo root (auto-loaded by `main.py`). See `.env.gemini.example`.
+
 - Ollama:
   - `set LLM_PROVIDER=ollama`
   - `set LLM_MODEL=llama3.1:8b`
@@ -98,3 +110,7 @@ Replace toy heuristics with an LLM for `threat_intel` and `report`:
   - `set LLM_PROVIDER=openai`
   - `set OPENAI_API_KEY=...`
   - `set LLM_MODEL=gpt-4o-mini`
+- Gemini:
+  - `set LLM_PROVIDER=gemini`
+  - `set GEMINI_API_KEY=...` (or `GOOGLE_API_KEY=...`)
+  - `set LLM_MODEL=gemini-1.5-flash`

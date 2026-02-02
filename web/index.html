@@ -4,8 +4,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AI‑SOC Host Agent</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2" />
+  <title>Calendar Host Agent</title>
+  <link rel="stylesheet" href="/static/styles.css?v=10" />
   <!-- Add this to your <head> -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,114 +15,244 @@
 </head>
 
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">AI‑SOC</div>
-      <div class="subtitle">Host Agent · A2A Gateway · Covert Timing Defense</div>
-    </div>
-    <div class="top-actions">
-      <a class="chip" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
-      <a class="chip" href="/health" target="_blank" rel="noreferrer">Health</a>
-    </div>
-  </header>
-
-  <main class="layout layout-2col">
-    <aside class="rail rail-left">
-      <section class="panel">
-        <div class="panel-head">
-          <div class="panel-title">Case</div>
-          <div class="panel-meta">
-            <span class="muted">Latest:</span>
-            <a id="caseLink" class="mono" href="#" target="_blank" rel="noreferrer">—</a>
-          </div>
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-shell">
+      <div class="auth-card">
+        <div class="auth-logo">Calendar Host Agent</div>
+        <div class="auth-tagline">Sign in to reach your personal calendar assistant.</div>
+        <div id="authStatus" class="auth-status muted tiny">Use your account to continue.</div>
+        <div class="auth-tabs">
+          <button id="authLoginTab" class="btn sm active" type="button">Login</button>
+          <button id="authRegisterTab" class="btn sm ghost" type="button">Create</button>
         </div>
-        <div class="cards">
-          <div class="card">
-            <div class="card-title">Agents</div>
-            <div id="agentList" class="list muted">Loading agents…</div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Alerts</div>
-            <div id="alerts" class="list muted">No alerts yet.</div>
-          </div>
+        <div class="auth-form">
+          <input id="authUsername" type="text" placeholder="Username or email" autocomplete="username" />
+          <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
+          <input id="authDisplayName" class="hidden" type="text" placeholder="Display name (for calendar)"
+            autocomplete="name" />
+          <button id="authSubmitBtn" class="btn primary" type="button">Login</button>
+          <div id="authMessage" class="tiny muted"></div>
         </div>
-      </section>
-    </aside>
-
-    <section class="panel chat">
-      <div class="panel-head">
-        <div class="panel-title">Host Agent</div>
-        <div class="panel-meta">
-          <span class="muted">Session:</span>
-          <span id="sessionId" class="mono">—</span>
-        </div>
+        <div class="auth-footer tiny muted">Passwords are hashed and stored locally in SQLite.</div>
       </div>
-
-      <div id="messages" class="messages" aria-live="polite"></div>
-
-      <div class="composer">
-        <textarea id="input" placeholder="Describe an incident (text) or paste a JSON incident bundle. Tip: if you paste a template prompt, put the real details after 'Incident:'. Ctrl+Enter to send."
-          rows="3"></textarea>
-        <div class="quickbar">
-          <button id="commandsBtn" class="btn">Commands</button>
-          <label class="quick-select">
-            <span class="sr-only">Sample incident</span>
-            <select id="sampleSelect" aria-label="Sample incidents">
-              <option value="cred_dump" selected>Sample: Credential dumping</option>
-              <option value="phishing">Sample: Phishing → OAuth token theft</option>
-              <option value="lateral">Sample: Lateral movement</option>
-              <option value="web_attack">Sample: Web attack</option>
-            </select>
-          </label>
-          <button id="loadSampleBtn" class="btn">Load sample</button>
-          <button id="copyCaseBtn" class="btn ghost" disabled>Copy case id</button>
-        </div>
-        <div class="composer-actions">
-          <button id="sendBtn" class="btn primary">Send</button>
-          <button id="clearBtn" class="btn ghost">Clear</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
-  </main>
-
-
-  <script src="/static/app.js?v=2"></script>
-
-  <div id="modal" class="modal hidden" aria-hidden="true">
-    <div class="modal-backdrop" id="modalBackdrop"></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Commands and samples">
-      <div class="modal-head">
-        <div class="modal-title">Commands & Samples</div>
-        <button id="modalClose" class="btn ghost">Close</button>
-      </div>
-      <div class="modal-body">
-        <div class="modal-grid">
-          <div class="card">
-            <div class="card-title">Commands</div>
-            <div id="commandsList" class="list mono">/help
-/reset
-/last
-/case &lt;id&gt;
-/iocs [id|last]
-/mitre [id|last]
-/timeline [id|last]
-/export [id|last]</div>
-            <div class="muted tiny">Tip: paste JSON to skip triage questions.</div>
+      <div class="auth-hero">
+        <div class="hero-title">Your calendar agent is ready.</div>
+        <div class="hero-subtitle">Secure, fast, and tuned for natural language scheduling.</div>
+        <div class="hero-grid">
+          <div class="hero-card">
+            <div class="hero-label">Private by default</div>
+            <div class="hero-text">Accounts and events live in local SQLite storage.</div>
           </div>
-          <div class="card">
-            <div class="card-title">How to Write an Incident</div>
-            <div class="list muted">
-              Include: affected host(s), timeframe, what was observed, indicators (IPs/domains/URLs/hashes), and what controls alerted (EDR/SIEM).
-            </div>
-            <div class="muted tiny">Example: “On pc-hr-01, winword.exe spawned powershell.exe; EDR flagged credential dumping. dc-01 shows 15 login failures for j.smith in 10 minutes.”</div>
+          <div class="hero-card">
+            <div class="hero-label">Agent trace</div>
+            <div class="hero-text">Every request is traced through the A2A gateway.</div>
+          </div>
+          <div class="hero-card">
+            <div class="hero-label">Natural language</div>
+            <div class="hero-text">Ask in plain English. Get structured calendar actions.</div>
           </div>
         </div>
       </div>
     </div>
   </div>
-</body>
+
+  <div id="appScreen" class="app-screen hidden">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">Calendar</div>
+        <div class="subtitle">Host Agent · A2A Trace · Covert Timing Demo</div>
+      </div>
+      <div class="top-actions">
+        <button id="authLogoutBtn" class="chip chip-btn" type="button">Logout</button>
+        <a class="chip" href="/docs" target="_blank" rel="noreferrer">API Docs</a>
+        <a class="chip" href="/health" target="_blank" rel="noreferrer">Health</a>
+      </div>
+    </header>
+
+    <main class="layout layout-2col">
+      <aside class="rail rail-left">
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Report</div>
+            <div class="panel-meta">
+              <span class="muted">Latest:</span>
+              <a id="caseLink" class="mono" href="#" target="_blank" rel="noreferrer">—</a>
+            </div>
+          </div>
+          <div class="cards">
+            <div class="card">
+              <div class="card-title">Agents</div>
+              <div id="agentList" class="list muted">Loading agents…</div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Alerts</div>
+              <div id="alerts" class="list muted">No alerts yet.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel calendar-panel">
+          <div class="panel-head calendar-head">
+            <div>
+              <div class="panel-title">Calendar</div>
+              <div id="calendarStatus" class="tiny muted">Loading…</div>
+            </div>
+            <div class="calendar-controls">
+              <button id="calendarTodayBtn" class="btn sm ghost" type="button">Today</button>
+              <button id="calendarOpenBtn" class="btn sm" type="button">Open</button>
+              <button id="calendarPrevBtn" class="btn sm ghost" type="button" aria-label="Previous month">‹</button>
+              <div id="calendarLabel" class="calendar-label mono">—</div>
+              <button id="calendarNextBtn" class="btn sm ghost" type="button" aria-label="Next month">›</button>
+            </div>
+          </div>
+          <div class="calendar-body">
+
+            <div class="calendar-detail">
+              <div class="calendar-detail-head">
+                <div id="calendarDetailLabel" class="calendar-detail-title">Select a day</div>
+                <div id="calendarDetailMeta" class="tiny muted">—</div>
+              </div>
+              <div class="calendar-hour-scale">
+                <span>0</span>
+                <span>6</span>
+                <span>12</span>
+                <span>18</span>
+                <span>24</span>
+              </div>
+              <div id="calendarDetailList" class="calendar-detail-list muted">No events yet.</div>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="panel chat">
+        <div class="panel-head">
+          <div class="panel-title">Host Agent</div>
+          <div class="panel-meta">
+            <span class="muted">Session:</span>
+            <span id="sessionId" class="mono">—</span>
+          </div>
+        </div>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <div class="composer">
+          <textarea id="input"
+            placeholder="Try: “Show my calendar for today.” Or: “Add 10am Gym tomorrow.” Ctrl+Enter to send."
+            rows="3"></textarea>
+          <div class="quickbar">
+            <button id="commandsBtn" class="btn">Commands</button>
+            <label class="quick-select">
+              <span class="sr-only">Sample prompt</span>
+              <select id="sampleSelect" aria-label="Sample prompts">
+                <option value="assistant_today" selected>Sample: Show today</option>
+                <option value="assistant_add">Sample: Add activity</option>
+                <option value="assistant_work">Sample: Work schedule (Mon–Fri)</option>
+                <option value="assistant_everyday">Sample: Every day at 9</option>
+                <option value="assistant_search">Sample: Search + edit</option>
+                <option value="assistant_next">Sample: What's next?</option>
+                <option value="assistant_week">Sample: Show my week</option>
+                <option value="assistant_busy">Sample: How busy today?</option>
+                <option value="assistant_remind">Sample: Remind me to...</option>
+              </select>
+            </label>
+            <button id="loadSampleBtn" class="btn">Load sample</button>
+            <button id="copyCaseBtn" class="btn ghost" disabled>Copy case id</button>
+          </div>
+          <div class="composer-actions">
+            <label class="stream-toggle">
+              <input id="streamToggle" type="checkbox" checked />
+              <span>Stream</span>
+            </label>
+            <button id="sendBtn" class="btn primary">Send</button>
+            <button id="clearBtn" class="btn ghost">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Covert lab UI removed: covert channel triggers automatically during agent communication -->
+    </main>
+
+    <div id="modal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" id="modalBackdrop"></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Commands and samples">
+        <div class="modal-head">
+          <div class="modal-title">Commands & Samples</div>
+          <button id="modalClose" class="btn ghost">Close</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-grid">
+            <div class="card">
+              <div class="card-title">Commands</div>
+              <div id="commandsList" class="list mono">/help
+                /reset
+                /last</div>
+            </div>
+            <div class="card">
+              <div class="card-title">How to Ask</div>
+              <div class="list muted">
+                Say what day you mean (today/tomorrow/date), the time (optional), and the activity.
+              </div>
+              <div class="muted tiny">Examples: “Show my calendar for today.” · “Add 14:00 Dentist tomorrow.” · “Delete
+                2.”</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="calendarModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" id="calendarModalBackdrop"></div>
+      <div class="modal-card calendar-modal-card" role="dialog" aria-modal="true" aria-label="Calendar">
+        <div class="modal-head calendar-modal-head">
+          <div>
+            <div class="modal-title">Calendar</div>
+            <div id="calendarStatusModal" class="tiny muted">Loading…</div>
+          </div>
+          <div class="calendar-controls">
+            <button id="calendarTodayBtnModal" class="btn sm ghost" type="button">Today</button>
+            <button id="calendarPrevBtnModal" class="btn sm ghost" type="button" aria-label="Previous month">‹</button>
+            <div id="calendarLabelModal" class="calendar-label mono">—</div>
+            <button id="calendarNextBtnModal" class="btn sm ghost" type="button" aria-label="Next month">›</button>
+            <button id="calendarModalClose" class="btn sm ghost" type="button">Close</button>
+          </div>
+        </div>
+        <div class="modal-body calendar-modal-body">
+          <div class="calendar-modal-grid">
+            <div>
+              <div class="calendar-weekdays">
+                <span>Mon</span>
+                <span>Tue</span>
+                <span>Wed</span>
+                <span>Thu</span>
+                <span>Fri</span>
+                <span>Sat</span>
+                <span>Sun</span>
+              </div>
+              <div id="calendarGridModal" class="calendar-grid calendar-grid-modal"></div>
+            </div>
+            <div class="calendar-detail calendar-detail-modal">
+              <div class="calendar-detail-head">
+                <div id="calendarDetailLabelModal" class="calendar-detail-title">Select a day</div>
+                <div id="calendarDetailMetaModal" class="tiny muted">—</div>
+              </div>
+              <div class="calendar-hour-scale">
+                <span>0</span>
+                <span>6</span>
+                <span>12</span>
+                <span>18</span>
+                <span>24</span>
+              </div>
+              <div id="calendarDetailListModal" class="calendar-detail-list muted">No events yet.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=10"></script>
+  </body>
 
 </html>

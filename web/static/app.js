@@ -2,43 +2,48 @@
 
 let sessionId = null;
 let latestCaseId = null;
+let authToken = null;
+let authUser = null;
+let authMode = "login";
 
 const el = (id) => document.getElementById(id);
 
 const SAMPLES = {
-  cred_dump:
-    "Title: Suspicious PowerShell + credential dumping\n" +
-    "Incident: On pc-hr-01, winword.exe spawned powershell.exe. EDR flagged possible mimikatz/lsass access. Shortly after, dc-01 shows 15 login failures for user j.smith in 10 minutes. Possible lateral movement.\n" +
-    "Notes: Please summarize, map to MITRE, list IOCs, and propose a triage + containment plan (policy-safe).",
-  phishing:
-    "Title: Phishing → OAuth token abuse\n" +
-    "Incident: Multiple users reported a fake Microsoft 365 login page. User a.ivanov clicked the link and completed login. Later, CAS/IdP logs show unusual OAuth consent granted to app 'MailSyncPro' and mailbox rules created to auto-forward invoices to external address.\n" +
-    "Indicators: URL https://login-microsoft-security[.]com/ , external recipient billing-dept@protonmail.com\n" +
-    "Request: Identify containment actions and evidence to preserve.",
-  lateral:
-    "Title: Suspected lateral movement via SMB\n" +
-    "Incident: From host ws-17, we observed connections to multiple internal hosts over SMB (445) within 5 minutes. EDR shows psexec-like service creation and remote cmd execution attempts. New local admin account 'svc-backup' appeared on two machines.\n" +
-    "Indicators: account svc-backup, ports 445/135, process psexesvc.exe\n" +
-    "Timeframe: last 10 minutes",
-  web_attack:
-    "Title: Web attack / possible credential stuffing\n" +
-    "Incident: Web gateway logs show repeated POST /login attempts from 185.199.110.153 against 200+ usernames. Some successes followed by access to /admin. WAF shows spikes in 401/403 and rate-limit triggers.\n" +
-    "Indicators: IP 185.199.110.153, endpoint /login\n" +
-    "Timeframe: 2026-01-22 21:10–21:25",
+  assistant_today: "I'm Tamara — show my calendar for today.",
+  assistant_add: "I'm Tamara — add 10am Gym today.",
+  assistant_work: "I'm Tamara — I'm working every day from 9 to 5 in Imbrium from Monday to Friday.",
+  assistant_everyday: "I'm Tamara — every day at 9:00 go to work.",
+  assistant_search: "I'm Tamara — add 14:00 Dentist tomorrow, then search for Dentist.",
+  assistant_next: "What's next?",
+  assistant_week: "Show my week",
+  assistant_busy: "How busy am I today?",
+  assistant_remind: "Remind me to call Mom at 5pm tomorrow",
 };
 
-async function fetchJson(url, options) {
-  const res = await fetch(url, options);
+const calendarState = {
+  viewDate: new Date(),
+  selectedDate: new Date(),
+  itemsByDay: {},
+  loading: false,
+};
+
+let calendarRefreshTimer = null;
+const CALENDAR_VIEW_SUFFIXES = ["", "Modal"];
+
+async function fetchJson(url, options = {}) {
+  const opts = options || {};
+  const headers = new Headers(opts.headers || {});
+  if (authToken) headers.set("x-auth-token", authToken);
+  opts.headers = headers;
+
+  const res = await fetch(url, opts);
   const ct = (res.headers.get("content-type") || "").toLowerCase();
   const isJson = ct.includes("application/json") || ct.includes("application/problem+json");
 
   if (isJson) {
     const data = await res.json();
     if (!res.ok) {
-      const msg =
-        (data && data.error && data.error.message) ||
-        (data && data.detail) ||
-        `Request failed (${res.status})`;
+      const msg = formatErrorMessage(data, res.status);
       throw new Error(msg);
     }
     return data;
@@ -49,12 +54,602 @@ async function fetchJson(url, options) {
   throw new Error(`Unexpected non-JSON response: ${text || res.statusText}`);
 }
 
+function formatErrorMessage(data, status) {
+  if (data && data.error && data.error.message != null) {
+    return String(data.error.message);
+  }
+  const detail = data ? data.detail : null;
+  if (detail != null) {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      const parts = detail
+        .map((item) => {
+          if (!item) return "";
+          if (typeof item === "string") return item;
+          if (typeof item === "object") return item.msg || item.message || JSON.stringify(item);
+          return String(item);
+        })
+        .filter(Boolean);
+      if (parts.length) return parts.join(" | ");
+    } else if (typeof detail === "object") {
+      return detail.msg || detail.message || JSON.stringify(detail);
+    } else {
+      return String(detail);
+    }
+  }
+  return `Request failed (${status || "error"})`;
+}
+
+function setAuthMessage(text, isError = false) {
+  const msg = el("authMessage");
+  if (!msg) return;
+  msg.textContent = text || "";
+  if (isError) {
+    msg.classList.remove("muted");
+  } else {
+    msg.classList.add("muted");
+  }
+}
+
+function errorText(err) {
+  if (err && typeof err === "object" && err.message) return String(err.message);
+  return String(err);
+}
+
+function toDateKey(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function fromDateKey(key) {
+  if (!key || typeof key !== "string") return null;
+  const parts = key.split("-").map((x) => parseInt(x, 10));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function formatMonthLabel(dateObj) {
+  try {
+    return dateObj.toLocaleString(undefined, { month: "long", year: "numeric" });
+  } catch {
+    return dateObj.toDateString();
+  }
+}
+
+function parseTimeToMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return null;
+  const parts = timeStr.split(":");
+  if (parts.length !== 2) return null;
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+function minutesToTime(minutes) {
+  const safe = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function formatDuration(minutes) {
+  if (!minutes || !Number.isFinite(minutes)) return "";
+  const total = Math.max(1, Math.min(24 * 60, Math.round(minutes)));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
+function formatTimeRange(timeStr, durationMinutes) {
+  if (!timeStr) return "";
+  if (!durationMinutes) return timeStr;
+  const start = parseTimeToMinutes(timeStr);
+  if (start == null) return timeStr;
+  const end = start + durationMinutes;
+  return `${timeStr}–${minutesToTime(end)}`;
+}
+
+function describeEventTime(item) {
+  const timeStr = item && item.time ? String(item.time) : "";
+  const duration = item && item.duration_minutes ? Number(item.duration_minutes) : null;
+  const range = formatTimeRange(timeStr, duration);
+  const durLabel = formatDuration(duration);
+  return { timeStr, duration, range, durLabel };
+}
+
+function getMonthRange(dateObj) {
+  const start = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
+  const end = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0);
+  return { start, end };
+}
+
+function sortCalendarItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.sort((a, b) => {
+    const ta = (a && a.time) || "99:99";
+    const tb = (b && b.time) || "99:99";
+    if (ta === tb) {
+      const da = a && a.duration_minutes ? Number(a.duration_minutes) : 0;
+      const db = b && b.duration_minutes ? Number(b.duration_minutes) : 0;
+      if (da !== db) return da - db;
+      return String((a && a.title) || "").localeCompare(String((b && b.title) || ""));
+    }
+    return ta.localeCompare(tb);
+  });
+}
+
+function groupCalendarItems(items) {
+  const grouped = {};
+  if (!Array.isArray(items)) return grouped;
+  items.forEach((item) => {
+    if (!item || !item.day) return;
+    const key = String(item.day);
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(item);
+  });
+  Object.keys(grouped).forEach((key) => {
+    grouped[key] = sortCalendarItems(grouped[key]);
+  });
+  return grouped;
+}
+
+function getCalendarViewElements(suffix) {
+  const s = suffix || "";
+  return {
+    status: el(`calendarStatus${s}`),
+    label: el(`calendarLabel${s}`),
+    grid: el(`calendarGrid${s}`),
+    detailLabel: el(`calendarDetailLabel${s}`),
+    detailMeta: el(`calendarDetailMeta${s}`),
+    detailList: el(`calendarDetailList${s}`),
+  };
+}
+
+function setCalendarStatus(text, isError = false) {
+  CALENDAR_VIEW_SUFFIXES.forEach((suffix) => {
+    const status = el(`calendarStatus${suffix}`);
+    if (!status) return;
+    status.textContent = text || "";
+    status.classList.toggle("muted", !isError);
+  });
+}
+
+function renderCalendarView(view) {
+  if (!view || !view.grid || !view.label) return;
+
+  const viewDate = calendarState.viewDate || new Date();
+  view.label.textContent = formatMonthLabel(viewDate);
+
+  view.grid.innerHTML = "";
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const first = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startOffset = (first.getDay() + 6) % 7; // Monday start
+
+  const todayKey = toDateKey(new Date());
+  const selectedKey = calendarState.selectedDate ? toDateKey(calendarState.selectedDate) : null;
+
+  for (let i = 0; i < startOffset; i += 1) {
+    const empty = document.createElement("div");
+    empty.className = "calendar-cell empty";
+    empty.setAttribute("aria-hidden", "true");
+    view.grid.appendChild(empty);
+  }
+
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateObj = new Date(year, month, day);
+    const key = toDateKey(dateObj);
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "calendar-cell";
+    cell.dataset.date = key;
+
+    if (key === todayKey) cell.classList.add("today");
+    if (selectedKey && key === selectedKey) cell.classList.add("selected");
+
+    const number = document.createElement("div");
+    number.className = "day-number";
+    number.textContent = String(day);
+    cell.appendChild(number);
+
+    const items = calendarState.itemsByDay[key] || [];
+    if (items.length) {
+      const list = document.createElement("div");
+      list.className = "calendar-events";
+      items.slice(0, 2).forEach((it) => {
+        const row = document.createElement("div");
+        row.className = "calendar-event";
+        const desc = describeEventTime(it);
+        const timeLabel = desc.range ? `${desc.range} ` : (desc.timeStr ? `${desc.timeStr} ` : "");
+        row.textContent = `${timeLabel}${it.title || "Untitled"}`;
+        list.appendChild(row);
+      });
+      if (items.length > 2) {
+        const more = document.createElement("div");
+        more.className = "calendar-event more";
+        more.textContent = `+${items.length - 2} more`;
+        list.appendChild(more);
+      }
+      cell.appendChild(list);
+    }
+
+    cell.addEventListener("click", () => selectCalendarDay(key));
+    view.grid.appendChild(cell);
+  }
+}
+
+function renderCalendar() {
+  CALENDAR_VIEW_SUFFIXES.forEach((suffix) => {
+    renderCalendarView(getCalendarViewElements(suffix));
+  });
+}
+
+function renderCalendarDetailView(view, dateKey) {
+  if (!view || !view.detailLabel || !view.detailMeta || !view.detailList) return;
+
+  const key = dateKey || (calendarState.selectedDate ? toDateKey(calendarState.selectedDate) : null);
+  if (!key) {
+    view.detailLabel.textContent = "Select a day";
+    view.detailMeta.textContent = "—";
+    view.detailList.classList.add("muted");
+    view.detailList.textContent = "No events yet.";
+    return;
+  }
+
+  const dateObj = fromDateKey(key);
+  if (!dateObj) return;
+  view.detailLabel.textContent = dateObj.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  const items = calendarState.itemsByDay[key] || [];
+  view.detailMeta.textContent = items.length ? `${items.length} item${items.length === 1 ? "" : "s"}` : "No events";
+  view.detailList.innerHTML = "";
+
+  if (!items.length) {
+    view.detailList.classList.add("muted");
+    view.detailList.textContent = "No events for this day.";
+    return;
+  }
+
+  view.detailList.classList.remove("muted");
+  items.forEach((it) => {
+    const desc = describeEventTime(it);
+    const row = document.createElement("div");
+    row.className = "calendar-detail-item";
+
+    const time = document.createElement("div");
+    time.className = "calendar-detail-time";
+    time.textContent = desc.range || desc.timeStr || "—";
+
+    const title = document.createElement("div");
+    title.className = "calendar-detail-title-text";
+    title.textContent = it.title || "Untitled";
+
+    const duration = document.createElement("div");
+    duration.className = "calendar-detail-duration";
+    duration.textContent = desc.durLabel || "";
+
+    const timeline = document.createElement("div");
+    timeline.className = "calendar-detail-timeline";
+    const block = document.createElement("div");
+    block.className = "calendar-detail-block";
+    const startMinutes = desc.timeStr ? parseTimeToMinutes(desc.timeStr) : null;
+    const durMinutes = desc.duration || 0;
+    if (startMinutes != null) {
+      const left = (startMinutes / (24 * 60)) * 100;
+      const width = durMinutes ? Math.max(2, (durMinutes / (24 * 60)) * 100) : 2;
+      block.style.left = `${left}%`;
+      block.style.width = `${Math.min(100 - left, width)}%`;
+    } else {
+      block.style.left = "0%";
+      block.style.width = "6%";
+      block.classList.add("no-time");
+    }
+    timeline.appendChild(block);
+
+    row.appendChild(time);
+    row.appendChild(title);
+    if (desc.durLabel) row.appendChild(duration);
+    row.appendChild(timeline);
+    view.detailList.appendChild(row);
+  });
+}
+
+function renderCalendarDetail(dateKey) {
+  CALENDAR_VIEW_SUFFIXES.forEach((suffix) => {
+    renderCalendarDetailView(getCalendarViewElements(suffix), dateKey);
+  });
+}
+
+function selectCalendarDay(key) {
+  const dateObj = fromDateKey(key);
+  if (!dateObj) return;
+  calendarState.selectedDate = dateObj;
+  renderCalendar();
+  renderCalendarDetail(key);
+}
+
+function applyAssistantState(state) {
+  if (!state || typeof state !== "object") return;
+  const dayKey = typeof state.day === "string" ? state.day : null;
+  if (dayKey) {
+    const dateObj = fromDateKey(dayKey);
+    if (dateObj) {
+      calendarState.selectedDate = dateObj;
+      if (calendarState.viewDate.getMonth() !== dateObj.getMonth() || calendarState.viewDate.getFullYear() !== dateObj.getFullYear()) {
+        calendarState.viewDate = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1);
+      }
+    }
+  }
+  if (dayKey && Array.isArray(state.items)) {
+    calendarState.itemsByDay[dayKey] = sortCalendarItems(state.items.slice());
+  }
+  renderCalendar();
+  renderCalendarDetail(dayKey);
+}
+
+async function refreshCalendar() {
+  if (!authToken) {
+    calendarState.itemsByDay = {};
+    setCalendarStatus("Sign in to load calendar.");
+    renderCalendar();
+    renderCalendarDetail(null);
+    return;
+  }
+
+  const { start, end } = getMonthRange(calendarState.viewDate);
+  const startKey = toDateKey(start);
+  const endKey = toDateKey(end);
+  calendarState.loading = true;
+  setCalendarStatus("Loading…");
+  try {
+    const data = await fetchJson(`/calendar/range?start=${encodeURIComponent(startKey)}&end=${encodeURIComponent(endKey)}`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    calendarState.itemsByDay = groupCalendarItems(items);
+    setCalendarStatus(`${items.length} event${items.length === 1 ? "" : "s"}`);
+  } catch (e) {
+    setCalendarStatus(`Calendar error: ${errorText(e)}`, true);
+  } finally {
+    calendarState.loading = false;
+    renderCalendar();
+    renderCalendarDetail();
+  }
+}
+
+function scheduleCalendarRefresh() {
+  if (calendarRefreshTimer) {
+    clearTimeout(calendarRefreshTimer);
+  }
+  calendarRefreshTimer = setTimeout(() => {
+    calendarRefreshTimer = null;
+    void refreshCalendar();
+  }, 250);
+}
+
+function initCalendar() {
+  calendarState.viewDate = new Date();
+  calendarState.selectedDate = new Date();
+  calendarState.itemsByDay = {};
+  renderCalendar();
+  renderCalendarDetail();
+  return refreshCalendar();
+}
+
+function resetCalendar() {
+  calendarState.viewDate = new Date();
+  calendarState.selectedDate = new Date();
+  calendarState.itemsByDay = {};
+  setCalendarStatus("Sign in to load calendar.");
+  renderCalendar();
+  renderCalendarDetail();
+}
+
+function changeCalendarMonth(delta) {
+  const current = calendarState.viewDate || new Date();
+  calendarState.viewDate = new Date(current.getFullYear(), current.getMonth() + delta, 1);
+  renderCalendar();
+  void refreshCalendar();
+}
+
+function wireCalendar() {
+  const prevBtn = el("calendarPrevBtn");
+  const nextBtn = el("calendarNextBtn");
+  const todayBtn = el("calendarTodayBtn");
+  const openBtn = el("calendarOpenBtn");
+  const prevBtnModal = el("calendarPrevBtnModal");
+  const nextBtnModal = el("calendarNextBtnModal");
+  const todayBtnModal = el("calendarTodayBtnModal");
+  const modal = el("calendarModal");
+  const modalClose = el("calendarModalClose");
+  const modalBackdrop = el("calendarModalBackdrop");
+
+  if (prevBtn) prevBtn.addEventListener("click", () => changeCalendarMonth(-1));
+  if (nextBtn) nextBtn.addEventListener("click", () => changeCalendarMonth(1));
+  if (todayBtn) {
+    todayBtn.addEventListener("click", () => {
+      calendarState.viewDate = new Date();
+      calendarState.selectedDate = new Date();
+      renderCalendar();
+      void refreshCalendar();
+    });
+  }
+  if (openBtn && modal) {
+    openBtn.addEventListener("click", () => openCalendarModal());
+  }
+  if (prevBtnModal) prevBtnModal.addEventListener("click", () => changeCalendarMonth(-1));
+  if (nextBtnModal) nextBtnModal.addEventListener("click", () => changeCalendarMonth(1));
+  if (todayBtnModal) {
+    todayBtnModal.addEventListener("click", () => {
+      calendarState.viewDate = new Date();
+      calendarState.selectedDate = new Date();
+      renderCalendar();
+      void refreshCalendar();
+    });
+  }
+  if (modalClose) modalClose.addEventListener("click", () => closeCalendarModal());
+  if (modalBackdrop) modalBackdrop.addEventListener("click", () => closeCalendarModal());
+}
+
+function setScreen(signedIn) {
+  const authScreen = el("authScreen");
+  const appScreen = el("appScreen");
+  if (authScreen) authScreen.classList.toggle("hidden", signedIn);
+  if (appScreen) appScreen.classList.toggle("hidden", !signedIn);
+}
+
+function setAuthMode(mode) {
+  authMode = mode === "register" ? "register" : "login";
+  const display = el("authDisplayName");
+  const submit = el("authSubmitBtn");
+  const loginTab = el("authLoginTab");
+  const registerTab = el("authRegisterTab");
+  if (display) display.classList.toggle("hidden", authMode !== "register");
+  if (submit) submit.textContent = authMode === "register" ? "Create account" : "Login";
+  if (loginTab) loginTab.classList.toggle("active", authMode === "login");
+  if (registerTab) registerTab.classList.toggle("active", authMode === "register");
+  setAuthMessage("");
+}
+
+function setAuthState(user) {
+  authUser = user || null;
+  const status = el("authStatus");
+  const logoutBtn = el("authLogoutBtn");
+  const submitBtn = el("authSubmitBtn");
+  const loginTab = el("authLoginTab");
+  const registerTab = el("authRegisterTab");
+  const usernameInput = el("authUsername");
+  const passwordInput = el("authPassword");
+  const displayInput = el("authDisplayName");
+
+  const signedIn = Boolean(user);
+  if (status) status.textContent = signedIn ? `Signed in as ${user.display_name}` : "Sign in to continue.";
+  if (logoutBtn) logoutBtn.classList.toggle("hidden", !signedIn);
+  if (submitBtn) submitBtn.classList.toggle("hidden", signedIn);
+  if (loginTab) loginTab.disabled = signedIn;
+  if (registerTab) registerTab.disabled = signedIn;
+  [usernameInput, passwordInput, displayInput].forEach((input) => {
+    if (!input) return;
+    input.disabled = signedIn;
+  });
+  if (displayInput) {
+    if (signedIn) {
+      displayInput.classList.add("hidden");
+    } else {
+      displayInput.classList.toggle("hidden", authMode !== "register");
+    }
+  }
+  if (!signedIn) setAuthMode(authMode);
+  setScreen(signedIn);
+}
+
+async function enterApp() {
+  setScreen(true);
+  if (el("messages")) el("messages").innerHTML = "";
+  setAlerts([]);
+  setCaseLink("");
+  await loadAgents();
+  await createSession();
+  await initCalendar();
+}
+
+async function bindSessionUser() {
+  if (!sessionId || !authToken) return;
+  try {
+    await fetchJson(`/host/sessions/${sessionId}/user`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  } catch (e) {
+    setAuthMessage(`Failed to bind user: ${errorText(e)}`, true);
+  }
+}
+
+async function submitAuth() {
+  const username = (el("authUsername") && el("authUsername").value || "").trim();
+  const password = (el("authPassword") && el("authPassword").value || "").trim();
+  const displayName = (el("authDisplayName") && el("authDisplayName").value || "").trim();
+
+  if (!username || !password) {
+    setAuthMessage("Username and password are required.", true);
+    return;
+  }
+
+  const endpoint = authMode === "register" ? "/auth/register" : "/auth/login";
+  const payload = { username, password };
+  if (authMode === "register" && displayName) payload.display_name = displayName;
+
+  try {
+    setAuthMessage(authMode === "register" ? "Creating account..." : "Signing in...");
+    const data = await fetchJson(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    authToken = data.token;
+    localStorage.setItem("authToken", authToken);
+    setAuthState(data.user);
+    await enterApp();
+    await bindSessionUser();
+    addBubble("system", `Signed in as ${data.user.display_name}.`);
+  } catch (e) {
+    setAuthMessage(errorText(e), true);
+  }
+}
+
+async function logoutAuth() {
+  try {
+    if (authToken) {
+      await fetchJson("/auth/logout", { method: "POST" });
+    }
+  } catch (e) {
+    setAuthMessage(errorText(e), true);
+  } finally {
+    authToken = null;
+    authUser = null;
+    localStorage.removeItem("authToken");
+    setAuthState(null);
+    sessionId = null;
+    latestCaseId = null;
+    setCaseLink("");
+    if (el("messages")) el("messages").innerHTML = "";
+    resetCalendar();
+    setAuthMessage("Signed out.");
+  }
+}
+
+async function initAuth() {
+  authToken = localStorage.getItem("authToken");
+  if (authToken) {
+    try {
+      const data = await fetchJson("/auth/me");
+      setAuthState(data.user);
+      await enterApp();
+      await bindSessionUser();
+      return;
+    } catch {
+      authToken = null;
+      localStorage.removeItem("authToken");
+    }
+  } else {
+    authToken = null;
+  }
+  setAuthMode("login");
+  setAuthState(null);
+}
+
 function addBubble(kind, text) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.textContent = text;
   el("messages").appendChild(bubble);
   el("messages").scrollTop = el("messages").scrollHeight;
+  return bubble;
 }
 
 function setAlerts(alerts) {
@@ -77,8 +672,13 @@ function setAlerts(alerts) {
 function setCaseLink(caseId) {
   latestCaseId = caseId;
   const link = el("caseLink");
-  link.textContent = caseId;
-  link.href = `/case/${caseId}`;
+  if (!caseId) {
+    link.textContent = "—";
+    link.href = "#";
+  } else {
+    link.textContent = caseId;
+    link.href = `/case/${caseId}`;
+  }
   const copyBtn = el("copyCaseBtn");
   if (copyBtn) copyBtn.disabled = !caseId;
 }
@@ -365,14 +965,129 @@ async function createSession() {
   }
 }
 
+function makeTaskId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  return `task_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+}
+
+function pickPart(parts, kind) {
+  if (!Array.isArray(parts)) return null;
+  for (const p of parts) {
+    if (p && typeof p === "object" && p.kind === kind) return p;
+  }
+  return null;
+}
+
+async function sendMessageStream(text) {
+  const taskId = makeTaskId();
+  const payload = {
+    jsonrpc: "2.0",
+    id: taskId,
+    method: "message/sendSubscribe",
+    params: {
+      message: {
+        contextId: sessionId,
+        taskId,
+        parts: [{ kind: "text", text }],
+      },
+    },
+  };
+
+  const headers = { "content-type": "application/json", accept: "text/event-stream" };
+  if (authToken) headers["x-auth-token"] = authToken;
+  const res = await fetch("/a2a/rpc", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (ct.includes("application/json")) {
+      const data = await res.json();
+      const msg = formatErrorMessage(data, res.status);
+      throw new Error(msg);
+    }
+    const t = await res.text();
+    throw new Error(`${res.status} ${res.statusText}: ${t || "Request failed"}`);
+  }
+
+  const statusBubble = addBubble("system", "Stream: submitted…");
+  const decoder = new TextDecoder("utf-8");
+  const reader = res.body.getReader();
+  let buf = "";
+
+  const handleEvent = (event, data) => {
+    if (event === "TaskStatusUpdateEvent") {
+      const st = data && data.status ? data.status : null;
+      const state = st && st.state ? st.state : "working";
+      statusBubble.textContent = `Stream: ${state}…`;
+      return;
+    }
+
+    if (event === "TaskArtifactUpdateEvent") {
+      const art = data && data.artifact ? data.artifact : null;
+      const parts = art && art.parts ? art.parts : [];
+      const dataPart = pickPart(parts, "data");
+      const textPart = pickPart(parts, "text");
+      const resp = dataPart && dataPart.data ? dataPart.data : null;
+      const reply = (resp && resp.reply) || (textPart && textPart.text) || "No reply.";
+
+      if (resp && resp.case_id) setCaseLink(resp.case_id);
+      if (resp && resp.alerts) setAlerts(resp.alerts);
+      if (resp && resp.case_id) void refreshCase(resp.case_id);
+
+      addBubble("assistant", reply);
+      if (resp && resp.assistant) applyAssistantState(resp.assistant);
+      scheduleCalendarRefresh();
+      // Covert channel auto-demo is intentionally hidden from the chat UI.
+      return;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    const frames = buf.split("\n\n");
+    buf = frames.pop() || "";
+    for (const frame of frames) {
+      const lines = frame.split("\n");
+      let event = "";
+      const dataLines = [];
+      for (const line of lines) {
+        if (!line || line.startsWith(":")) continue;
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) continue;
+      const raw = dataLines.join("\n");
+      let obj = null;
+      try {
+        obj = JSON.parse(raw);
+      } catch {
+        // ignore
+      }
+      handleEvent(event, obj);
+    }
+  }
+}
+
 async function sendMessage(text) {
   el("sendBtn").disabled = true;
   const covertBtn = el("covertBtn");
   if (covertBtn) covertBtn.disabled = true;
   addBubble("user", text);
-  addBubble("system", "Host agent routing tasks to agents…");
+  const useStream = Boolean(el("streamToggle") && el("streamToggle").checked);
+  if (!useStream) addBubble("system", "Host agent routing tasks to agents…");
 
   try {
+    if (useStream) {
+      await sendMessageStream(text);
+      return;
+    }
+
     const data = await fetchJson(`/host/sessions/${sessionId}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -384,16 +1099,9 @@ async function sendMessage(text) {
     if (data.case_id) void refreshCase(data.case_id);
 
     addBubble("assistant", data.reply || "No reply.");
-    if (data.covert) {
-      const covert = data.covert || {};
-      if (covert.error) {
-        addBubble("system", `Covert channel - error - ${covert.error}`);
-      } else {
-        const channel = covert.channel || "timing";
-        const msg = covert.sent || covert.decoded || "Tamara";
-        addBubble("assistant", `Covert channel - ${channel} - ${msg}`);
-      }
-    }
+    if (data.assistant) applyAssistantState(data.assistant);
+    scheduleCalendarRefresh();
+    // Covert channel auto-demo is intentionally hidden from the chat UI.
   } catch (e) {
     addBubble("system", `Error: ${String(e)}`);
   } finally {
@@ -447,7 +1155,6 @@ async function runCovertDemo() {
         decoded = decodedObj.observer_total_ms || decodedObj.agent_elapsed_ms || decodedObj.observer_size_bytes;
       }
     }
-    addBubble("assistant", `Covert channel - ${channel} - ${decoded || message}`);
   } catch (e) {
     setCovertResult({ bits: buildBits(), channel: (el("covertChannel") && el("covertChannel").value) || "timing", error: String(e) });
     addBubble("system", `Error: ${String(e)}`);
@@ -501,11 +1208,28 @@ function closeModal() {
   modal.setAttribute("aria-hidden", "true");
 }
 
+function openCalendarModal() {
+  const modal = el("calendarModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  renderCalendar();
+  renderCalendarDetail();
+  void refreshCalendar();
+}
+
+function closeCalendarModal() {
+  const modal = el("calendarModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+}
+
 async function copyCaseId() {
   if (!latestCaseId) return;
   try {
     await navigator.clipboard.writeText(latestCaseId);
-    addBubble("system", `Copied case id: ${latestCaseId}`);
+    addBubble("system", `Copied report id: ${latestCaseId}`);
   } catch {
     addBubble("system", "Copy failed (clipboard permission).");
   }
@@ -515,13 +1239,14 @@ function loadSample() {
   const sel = el("sampleSelect");
   const input = el("input");
   if (!sel || !input) return;
-  const key = sel.value || "cred_dump";
-  input.value = SAMPLES[key] || SAMPLES.cred_dump;
+  const key = sel.value || "assistant_today";
+  input.value = SAMPLES[key] || SAMPLES.assistant_today;
   input.focus();
-  addBubble("system", "Loaded sample incident into the input box.");
+  addBubble("system", "Loaded sample prompt into the input box.");
 }
 
 function wire() {
+  wireCalendar();
   el("sendBtn").addEventListener("click", () => {
     const text = el("input").value.trim();
     if (!text) return;
@@ -556,13 +1281,34 @@ function wire() {
   const copyBtn = el("copyCaseBtn");
   if (copyBtn) copyBtn.addEventListener("click", () => void copyCaseId());
 
+  const loginTab = el("authLoginTab");
+  if (loginTab) loginTab.addEventListener("click", () => setAuthMode("login"));
+  const registerTab = el("authRegisterTab");
+  if (registerTab) registerTab.addEventListener("click", () => setAuthMode("register"));
+  const submitBtn = el("authSubmitBtn");
+  if (submitBtn) submitBtn.addEventListener("click", () => void submitAuth());
+  const logoutBtn = el("authLogoutBtn");
+  if (logoutBtn) logoutBtn.addEventListener("click", () => void logoutAuth());
+
+  const authInputs = [el("authUsername"), el("authPassword"), el("authDisplayName")].filter(Boolean);
+  authInputs.forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void submitAuth();
+      }
+    });
+  });
+
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeModal();
+    if (e.key === "Escape") {
+      closeModal();
+      closeCalendarModal();
+    }
   });
 }
 
 window.addEventListener("DOMContentLoaded", () => {
   wire();
-  void loadAgents();
-  void createSession();
+  void initAuth();
 });

@@ -34,6 +34,9 @@ DEFAULT_AGENTS = [
     "compliance",
     "report",
     "malicious",
+    "calendar",
+    "calendar_view",
+    "calendar_edit",
 ]
 
 

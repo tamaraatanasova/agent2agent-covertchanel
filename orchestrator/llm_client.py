@@ -21,15 +21,29 @@ class LLMConfig:
         provider = os.getenv("LLM_PROVIDER", "none").strip().lower()
         model = os.getenv("LLM_MODEL", "").strip()
         if not model:
-            model = "llama3.1:8b" if provider == "ollama" else "gpt-4o-mini"
+            if provider == "ollama":
+                model = "llama3.1:8b"
+            elif provider == "gemini":
+                model = "gemini-1.5-flash"
+            else:
+                model = "gpt-4o-mini"
         base_url = os.getenv("LLM_BASE_URL", "").strip() or None
-        api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+        api_key: str | None = None
+        if provider == "openai":
+            api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+        elif provider == "gemini":
+            api_key = (
+                os.getenv("GEMINI_API_KEY", "").strip()
+                or os.getenv("GOOGLE_API_KEY", "").strip()
+                or os.getenv("GOOGLEAI_API_KEY", "").strip()
+                or None
+            )
         return cls(provider=provider, model=model, base_url=base_url, api_key=api_key)
 
     def enabled(self) -> bool:
         if self.provider in ("", "none", "off", "disabled"):
             return False
-        if self.provider == "openai":
+        if self.provider in ("openai", "gemini"):
             return bool(self.api_key)
         return True
 
@@ -56,7 +70,7 @@ def _post_json(url: str, payload: dict[str, Any], *, headers: dict[str, str] | N
 def chat_completion(messages: list[dict[str, str]], *, temperature: float = 0.2, max_tokens: int = 900) -> str:
     cfg = LLMConfig.from_env()
     if not cfg.enabled():
-        raise LLMError("LLM is disabled (set LLM_PROVIDER=ollama or LLM_PROVIDER=openai + OPENAI_API_KEY).")
+        raise LLMError("LLM is disabled (set LLM_PROVIDER=ollama, openai, or gemini with the corresponding API key).")
 
     if cfg.provider == "ollama":
         base = cfg.base_url or "http://127.0.0.1:11434"
@@ -94,5 +108,52 @@ def chat_completion(messages: list[dict[str, str]], *, temperature: float = 0.2,
             raise LLMError("openai: empty content")
         return content.strip()
 
-    raise LLMError(f"unsupported LLM_PROVIDER: {cfg.provider}")
+    if cfg.provider == "gemini":
+        base = cfg.base_url or "https://generativelanguage.googleapis.com/v1beta"
 
+        system_text = "\n".join(
+            str(m.get("content") or "").strip() for m in messages if isinstance(m, dict) and m.get("role") == "system"
+        ).strip()
+
+        contents: list[dict[str, Any]] = []
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            if role == "system":
+                continue
+            text = str(m.get("content") or "")
+            if not text:
+                continue
+            gem_role = "model" if role == "assistant" else "user"
+            contents.append({"role": gem_role, "parts": [{"text": text}]})
+
+        if not contents:
+            raise LLMError("gemini: no content")
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": float(temperature),
+                "maxOutputTokens": int(max_tokens),
+            },
+        }
+        if system_text:
+            payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+
+        url = base.rstrip("/") + f"/models/{cfg.model}:generateContent?key={cfg.api_key}"
+        data = _post_json(url, payload)
+
+        cands = data.get("candidates") if isinstance(data, dict) else None
+        if not isinstance(cands, list) or not cands:
+            raise LLMError("gemini: missing candidates")
+        content = (cands[0] or {}).get("content") if isinstance(cands[0], dict) else None
+        parts = content.get("parts") if isinstance(content, dict) else None
+        if not isinstance(parts, list) or not parts:
+            raise LLMError("gemini: missing content parts")
+        text = (parts[0] or {}).get("text") if isinstance(parts[0], dict) else None
+        if not isinstance(text, str) or not text.strip():
+            raise LLMError("gemini: empty content")
+        return text.strip()
+
+    raise LLMError(f"unsupported LLM_PROVIDER: {cfg.provider}")

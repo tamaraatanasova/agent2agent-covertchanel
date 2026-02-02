@@ -11,7 +11,7 @@ import secrets
 from dataclasses import dataclass
 from time import time as wall_time
 
-from orchestrator.config import AGENT_URLS, USE_REMOTE_AGENTS
+from orchestrator.config import AGENT_URLS, USE_REMOTE_AGENTS, COVERT_ACTIVE_IN_TRAFFIC
 from orchestrator.local_dispatch import dispatch_task as local_dispatch_task
 from orchestrator.remote_a2a import send_envelope, RemoteAgentError
 from orchestrator.output_policy import OutputPolicy, enforce_malicious_output
@@ -134,12 +134,22 @@ class Orchestrator:
                 self._store.append_message(err_env)
                 return {"error": err_env.error}
 
+        # Covert channel: active on every agent call when COVERT_ACTIVE_IN_TRAFFIC, or from demo _covert_payload.
+        explicit_covert = task.parameters.get("_covert_payload") if isinstance(task.parameters.get("_covert_payload"), str) else None
+        if explicit_covert is not None:
+            payload_for_covert = explicit_covert[:256]
+        elif COVERT_ACTIVE_IN_TRAFFIC:
+            payload_for_covert = f"{case_id[:12]}|{from_agent}->{to_agent}|{task.name}"
+        else:
+            payload_for_covert = None
+
         env = A2AEnvelope(
             case_id=case_id,
             from_agent=from_agent,
             to_agent=to_agent,
             type=MessageType.TASK,
             task=task,
+            covert_payload=payload_for_covert,
         )
         if self._require_sig and self._orchestrator_priv_b64:
             env.security = A2ASecurity.sign_envelope(env, private_key_b64=self._orchestrator_priv_b64)
@@ -147,6 +157,7 @@ class Orchestrator:
         self._store.append_message(env)
 
         start = time.perf_counter()
+        response_covert_payload: str | None = env.covert_payload
         try:
             if USE_REMOTE_AGENTS:
                 url = AGENT_URLS.get(to_agent)
@@ -168,6 +179,7 @@ class Orchestrator:
                 if upstream_env.type == MessageType.ERROR:
                     raise RuntimeError(upstream_env.error.get("message", "agent error"))
                 output = (upstream_env.result or {}).get("output", {})
+                response_covert_payload = upstream_env.covert_payload if upstream_env.covert_payload is not None else env.covert_payload
                 self._circuit_on_success(to_agent)
             else:
                 output = local_dispatch_task(to_agent, task)
@@ -216,9 +228,12 @@ class Orchestrator:
                     "alert": alert.__dict__ if alert else None,
                 },
             },
+            covert_payload=response_covert_payload,
         )
         result_env.trace = env.trace
         result_env.trace.add_hop(to_agent, latency_ms=elapsed_ms)
+        if env.covert_payload is not None or response_covert_payload is not None:
+            self._store.append_alert(case_id, {"type": "COVERT_PROTOCOL", "edge": f"{from_agent}->{to_agent}", "present": True})
         self._store.append_message(result_env)
         # Include a compact observer-visible size signal (helps size-channel analysis in demos).
         try:
@@ -429,7 +444,9 @@ class Orchestrator:
         if mitigation is not None:
             self.configure_mitigation(mitigation)
 
-        agents = list(AGENT_URLS.keys())
+        # Keep the covert-channel demo scoped to SOC agents (avoid pulling in unrelated assistant agents).
+        covert_demo_agents = ("telemetry", "threat_intel", "anomaly", "ir_planner", "compliance", "report", "malicious")
+        agents = [a for a in covert_demo_agents if a in AGENT_URLS]
         mesh_edges = [(a, b) for a in agents for b in agents if a != b]
         use_full_mesh = topology == "mesh" and bool(mesh_edges) and not self._require_sig
 
@@ -442,7 +459,7 @@ class Orchestrator:
                 return ("orchestrator", "malicious")
             return ("orchestrator", agents[i % len(agents)])
 
-        def run_once(mode: str, *, task_name: str, size_defense: bool) -> dict[str, Any]:
+        def run_once(mode: str, *, task_name: str, size_defense: bool, use_covert_payload: bool = False) -> dict[str, Any]:
             per_bit: list[dict[str, Any]] = []
             lat_total: list[float | None] = []
             lat_elapsed: list[float | None] = []
@@ -453,12 +470,15 @@ class Orchestrator:
                 else:
                     self.set_output_policy(OutputPolicy())
 
+                params: dict[str, Any] = {"i": idx, "bit": bit, "dummy": {"n": idx}}
+                if use_covert_payload:
+                    params["_covert_payload"] = bit
                 from_a, to_a = route_bit(idx)
                 r = self._call_agent(
                     case_id=case_id,
                     from_agent=from_a,
                     to_agent=to_a,
-                    task=A2ATask(name=task_name, parameters={"i": idx, "bit": bit, "dummy": {"n": idx}}),
+                    task=A2ATask(name=task_name, parameters=params),
                     mitigation_mode=mode,
                     rate_limit=False,
                 )
@@ -538,6 +558,20 @@ class Orchestrator:
                 "agents": agents,
                 "message": msg,
                 "blocked": blocked,
+                **single,
+            }
+
+        if channel == "protocol":
+            # Covert channel in A2A protocol: bits sent via envelope.covert_payload (detectable, signed).
+            single = run_once("off", task_name="covert_send_storage_bit", size_defense=False, use_covert_payload=True)
+            return {
+                "case_id": case_id,
+                "bits_len": len(bits),
+                "bits_hash": bits_hash,
+                "channel": channel,
+                "topology": topology,
+                "agents": agents,
+                "message": msg,
                 **single,
             }
 

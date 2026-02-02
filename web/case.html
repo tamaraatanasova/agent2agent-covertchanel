@@ -5,7 +5,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI‑SOC Case</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2" />
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
+  <link rel="stylesheet" href="/static/case.css?v=1" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -19,17 +20,19 @@
       <div class="subtitle">Case Viewer · Friendly Trace</div>
     </div>
     <div class="top-actions">
-      <a class="chip" href="/" rel="noreferrer">Back</a>
+      <a class="chip" href="/" rel="noreferrer">← Back</a>
+      <button id="copyCaseIdBtn" class="chip chip-btn" title="Copy case ID">Copy ID</button>
       <a id="rawLink" class="chip" href="#" target="_blank" rel="noreferrer">Raw JSON</a>
       <button id="refreshBtn" class="chip chip-btn">Refresh</button>
     </div>
   </header>
 
   <main class="layout case-layout">
-    <section class="panel">
+    <section class="panel" id="overview-section">
       <div class="panel-head">
         <div class="panel-title">Case Overview</div>
-        <div class="panel-meta">
+        <div class="panel-meta case-meta">
+          <span id="severityBadge" class="severity-badge severity-low">—</span>
           <span class="muted">ID:</span>
           <span id="caseId" class="mono">—</span>
         </div>
@@ -44,7 +47,7 @@
           <div id="analysisBox" class="list muted">—</div>
         </div>
         <div class="card">
-          <div class="card-title">Alerts</div>
+          <div class="card-title">Alerts <span id="alertsCount" class="badge-count"></span></div>
           <div id="alertsBox" class="list muted">—</div>
         </div>
       </div>
@@ -64,7 +67,7 @@
           <div id="reportBox" class="list muted">—</div>
         </div>
         <div class="card">
-          <div class="card-title">Covert Analysis</div>
+          <div class="card-title">Covert Channel</div>
           <div id="covertCaseBox" class="list muted">—</div>
         </div>
         <div class="card">
@@ -74,7 +77,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="trace-section">
       <div class="panel-head">
         <div class="panel-title">A2A Trace</div>
         <div class="panel-meta">
@@ -90,7 +93,7 @@
     </section>
   </main>
 
-  <script src="/static/case.js?v=2"></script>
+  <script src="/static/case.js?v=3"></script>
 </body>
 
 </html>
